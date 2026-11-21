@@ -1,0 +1,151 @@
+use crate::ScanOptions;
+use std::{
+    fs::{self, Metadata},
+    path::{Component, Path},
+    process::{Command, Stdio},
+};
+
+pub fn linked(meta: &Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        if meta.file_attributes() & 0x400 != 0 {
+            return true;
+        }
+    }
+    meta.file_type().is_symlink()
+}
+
+pub fn system_path(path: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        [
+            "/bin",
+            "/boot",
+            "/dev",
+            "/etc",
+            "/lib",
+            "/lib64",
+            "/proc",
+            "/root",
+            "/run",
+            "/sbin",
+            "/sys",
+            "/usr",
+            "/var/lib",
+            "/var/log",
+            "/System",
+            "/Library",
+            "/Applications",
+            "/private/etc",
+            "/private/var/db",
+        ]
+        .iter()
+        .any(|p| path.starts_with(p))
+    }
+    #[cfg(windows)]
+    {
+        // Canonical paths can use a verbatim drive prefix. Compare components.
+        let first = path.components().find_map(|c| match c {
+            Component::Normal(v) => Some(v.to_string_lossy().to_ascii_lowercase()),
+            _ => None,
+        });
+        matches!(
+            first.as_deref(),
+            Some(
+                "windows"
+                    | "program files"
+                    | "program files (x86)"
+                    | "programdata"
+                    | "system volume information"
+                    | "$recycle.bin"
+            )
+        )
+    }
+}
+
+pub fn excluded(path: &Path, opts: &ScanOptions) -> bool {
+    opts.exclusions.iter().any(|e| {
+        if e.is_absolute() {
+            path.starts_with(e)
+        } else {
+            path.components()
+                .any(|c| matches!(c, Component::Normal(s) if Path::new(s) == e))
+        }
+    })
+}
+
+pub fn has_git_marker(path: &Path) -> bool {
+    path.components()
+        .any(|c| c.as_os_str().eq_ignore_ascii_case(".git"))
+}
+
+pub fn repository_boundary(path: &Path) -> Option<&'static str> {
+    let mut seen = false;
+    for dir in path.ancestors() {
+        match fs::symlink_metadata(dir.join(".git")) {
+            Ok(m) if linked(&m) || !m.is_dir() => {
+                return Some("Linked Git worktree or submodule boundary.")
+            }
+            Ok(_) if seen => return Some("Nested Git repository boundary."),
+            Ok(_) => seen = true,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Some("Repository boundary could not be inspected."),
+        }
+    }
+    None
+}
+
+pub fn tracked(project: &Path, relative: &str) -> Option<&'static str> {
+    if !project
+        .ancestors()
+        .any(|d| d.join(".git").symlink_metadata().is_ok())
+    {
+        return None;
+    }
+    // ls-files reads the index. Disable hooks, external fsmonitor and optional
+    // index updates; never invoke project commands or filters. Git must be on PATH.
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let executable = std::env::split_paths(&path)
+        .filter(|dir| dir.is_absolute())
+        .map(|dir| dir.join(if cfg!(windows) { "git.exe" } else { "git" }))
+        .find(|file| file.is_file());
+    let Some(executable) = executable else {
+        return Some("Git executable unavailable for index verification.");
+    };
+    let mut git = Command::new(executable);
+    // Ignore ambient repository/index overrides and injected command config.
+    for (key, _) in std::env::vars_os() {
+        if key.to_string_lossy().starts_with("GIT_") {
+            git.env_remove(key);
+        }
+    }
+    let status = git
+        .arg("-C")
+        .arg(project)
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env(
+            "GIT_CONFIG_GLOBAL",
+            if cfg!(windows) { "NUL" } else { "/dev/null" },
+        )
+        .args([
+            "--literal-pathspecs",
+            "-c",
+            "core.fsmonitor=false",
+            "ls-files",
+            "--cached",
+            "--error-unmatch",
+            "--",
+            relative,
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    match status.ok().and_then(|s| s.code()) {
+        Some(0) => Some("The Git index contains tracked paths in this artifact."),
+        Some(1) => None,
+        _ => Some("The Git index could not be verified."),
+    }
+}
