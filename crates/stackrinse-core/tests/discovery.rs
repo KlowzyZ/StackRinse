@@ -227,3 +227,56 @@ fn nested_python_bytecode_belongs_to_nearest_project() {
     assert_eq!(plan.candidates.len(), 1);
     assert_eq!(plan.candidates[0].path, r.join("src/__pycache__"));
 }
+
+#[cfg(windows)]
+#[test]
+fn junction_inside_candidate_protects_it_and_skips_the_target() {
+    let (_temp, dir) = root();
+    file(&dir, "app/Cargo.toml", "");
+    file(&dir, "app/target/.rustc_info.json", "x");
+    file(&dir, "outside/private.txt", "must never count");
+    // Use only fixed relative arguments. The fixture can have a Unicode or spaced path.
+    let junction = Command::new("cmd.exe")
+        .current_dir(dir.join("app/target"))
+        .args(["/d", "/c", "mklink", "/J", "linked", r"..\..\outside"])
+        .output()
+        .unwrap();
+    assert!(
+        junction.status.success(),
+        "{}",
+        String::from_utf8_lossy(&junction.stderr)
+    );
+    let report = inventory(&dir.join("app"), Default::default());
+    assert_eq!(report.projects[0].logical_bytes, 1);
+    assert!(dry_run(&report).candidates.is_empty());
+    assert!(scan(
+        &[dir.join("app/target/linked")],
+        &Default::default(),
+        &AtomicBool::new(false),
+        |_| {}
+    )
+    .is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn inaccessible_artifact_subdirectory_blocks_review() {
+    use std::os::unix::fs::PermissionsExt;
+    let (_temp, dir) = root();
+    file(&dir, "Cargo.toml", "");
+    file(&dir, "target/.rustc_info.json", "x");
+    file(&dir, "target/locked/private.txt", "private");
+    let locked = dir.join("target/locked");
+    let original = fs::metadata(&locked).unwrap().permissions();
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+    let can_read_without_permissions = fs::read_dir(&locked).is_ok();
+    let report = inventory(&dir, Default::default());
+    fs::set_permissions(&locked, original).unwrap();
+    if !can_read_without_permissions {
+        assert_eq!(
+            report.projects[0].candidates[0].classification,
+            Classification::Protected
+        );
+        assert!(dry_run(&report).candidates.is_empty());
+    }
+}

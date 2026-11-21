@@ -35,6 +35,18 @@ Choose a scan root in the desktop window. Review candidates by project and inspe
 
 Build locally with `npm run tauri build`. Dependency installation and initial builds require network access. Discovery runs locally.
 
+## What discovery recognizes
+
+| Project evidence | Examples of artifact evidence |
+| --- | --- |
+| Node.js manifest | Package-manager metadata in `node_modules`, framework output markers in `.next` and `.nuxt` |
+| Python manifest | `pyvenv.cfg` inside an environment, pytest cache marker, interpreter-named bytecode beside matching source |
+| Cargo manifest | Compiler metadata or cache tag in `target` |
+| .NET project file | NuGet assets in `obj`, build configuration directories in `bin` |
+| Maven or Gradle build file | Class or generator directories in the corresponding build output |
+
+Recognition uses filesystem structure and metadata. A valid-looking name can still contain hand edits. The engine checks Git index membership in repositories using a local Git installation and protects candidates when it cannot verify the index.
+
 ## Interpreting results
 
 A candidate's logical byte count describes the files observed during traversal. It can differ substantially from the storage the filesystem would release. Read the classification, detection evidence and rebuild implications before acting. A dependency installation can contain local modifications. A manifest timestamp offers limited evidence of activity.

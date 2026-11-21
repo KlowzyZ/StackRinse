@@ -132,6 +132,7 @@ export function Overview({
       review_required: 0,
       protected: 0,
     };
+    const sizes = { ...counts };
     let size = 0,
       count = 0;
     for (const p of projects)
@@ -139,12 +140,14 @@ export function Overview({
         size += c.logical_bytes;
         count++;
         counts[c.classification]++;
+        sizes[c.classification] += c.logical_bytes;
         groups.set(c.category, (groups.get(c.category) || 0) + c.logical_bytes);
       }
     return {
       size,
       count,
       counts,
+      sizes,
       entries: [...groups.entries()].sort((a, b) => b[1] - a[1]),
       top: [...projects]
         .sort((a, b) => b.logical_bytes - a.logical_bytes)
@@ -201,7 +204,7 @@ export function Overview({
         <footer className="instrumentFoot">
           <span className="signal" />
           {report
-            ? report.cancelled
+            ? report.cancelled || report.warnings.length > 0
               ? "Partial inventory"
               : "Inventory measured"
             : "Awaiting first scan"}
@@ -242,7 +245,9 @@ export function Overview({
             {(Object.keys(data.counts) as Risk[]).map((r) => (
               <div key={r}>
                 <RiskLabel risk={r} />
-                <b>{report ? data.counts[r] : "—"}</b>
+                <b>
+                  {report ? `${data.counts[r]} · ${bytes(data.sizes[r])}` : "—"}
+                </b>
               </div>
             ))}
           </div>
