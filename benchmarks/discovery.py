@@ -26,7 +26,7 @@ def main():
     args = parser.parse_args()
     binary = args.binary.resolve(strict=True)
     with tempfile.TemporaryDirectory(prefix="stackrinse-bench-") as temp:
-        root = Path(temp)
+        root = Path(temp).resolve(strict=True)
         payload = b"x" * 1024
         for i in range(args.projects):
             project = root / f"project-{i:06}"

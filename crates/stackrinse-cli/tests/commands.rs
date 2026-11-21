@@ -29,7 +29,12 @@ fn fixture() -> TempDir {
 }
 
 fn run(cmd: &str, root: &Path, flags: &[&str]) -> Output {
-    command().arg(cmd).arg(root).args(flags).output().unwrap()
+    command()
+        .arg(cmd)
+        .arg(root.canonicalize().unwrap())
+        .args(flags)
+        .output()
+        .unwrap()
 }
 
 #[test]
