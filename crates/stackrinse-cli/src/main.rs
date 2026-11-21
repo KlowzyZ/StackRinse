@@ -16,7 +16,7 @@ use std::{
     version,
     about = "Clean builds. Keep code.",
     long_about = "Discover generated developer storage and preview cleanup locally. Choose one or more directories to scan. All commands are read-only.",
-    after_help = "Examples:\n  stackrinse scan ./projects --min-size 100MB\n  stackrinse inspect ./projects --json\n  stackrinse clean ./projects --dry-run"
+    after_help = "Examples:\n  stackrinse scan ./projects --min-size 100MB\n  stackrinse inspect ./projects --json\n  stackrinse clean ./projects --dry-run\n\nExit codes:\n  0 complete   1 operational error   2 invalid arguments\n  3 scan warnings   130 interrupted"
 )]
 struct Cli {
     #[command(subcommand)]
