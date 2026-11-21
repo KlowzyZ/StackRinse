@@ -10,3 +10,5 @@ STACKRINSE_SCREENSHOTS="$PWD/../../docs/screenshots" npm run test:e2e
 ```
 
 Set `CHROMIUM_PATH` to use an existing Chromium executable. The folder suffix and scan times vary by run.
+
+[Linux native overview](overview-linux-native.png) shows the Tauri WebKitGTK window during a scan of three disposable projects. The native smoke test used WebKitWebDriver to run the scan from persisted fixture roots, open a project and preview a selected dependency directory through Rust IPC.

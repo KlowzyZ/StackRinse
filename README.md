@@ -4,6 +4,8 @@
 
 StackRinse is an offline developer storage manager by KLOWZY. Point it at a workspace to inspect generated artifacts, compare their logical sizes, and see what each project would need to rebuild. The Rust CLI and desktop application share a read-only discovery engine. This development version previews cleanup.
 
+![StackRinse inventory of a temporary development workspace](docs/screenshots/overview-linux-native.png)
+
 ## Try the CLI
 
 Install stable Rust with Cargo, then run from the repository root. Replace `./projects` with a directory you want to inspect.
@@ -16,6 +18,8 @@ cargo run -p stackrinse-cli -- clean ./projects --dry-run
 ```
 
 Use multiple roots to survey separate workspaces. Use `--exclude` to skip a directory and `--protect` to omit a project from planning. Use `--help` on a subcommand for its options. To put the binary on your Cargo path, run `cargo install --locked --path crates/stackrinse-cli`.
+
+Exit statuses are 0 for a completed command, 1 for an operational error, 2 for invalid arguments, 3 for a scan with warnings and 130 for cancellation.
 
 ## Run the desktop application
 
@@ -49,6 +53,8 @@ npm run build
 npx playwright install chromium
 npm run test:e2e
 ```
+
+Run the [synthetic discovery benchmark](benchmarks/README.md) to measure traversal on your filesystem.
 
 Contributions are welcome, especially small temporary fixtures that distinguish generated artifacts from similarly named user directories. See the [contributing guide](CONTRIBUTING.md), [community guidelines](CODE_OF_CONDUCT.md), and [security reporting instructions](SECURITY.md).
 
