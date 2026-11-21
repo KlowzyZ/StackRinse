@@ -22,3 +22,11 @@ rustc-ice-*.txt
 #  and can be added to the global gitignore or merged into this file.  For a more nuclear
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
+
+# Desktop development
+node_modules/
+dist/
+test-results/
+playwright-report/
+.DS_Store
+apps/stackrinse-desktop/src-tauri/gen/schemas/
