@@ -1,0 +1,13 @@
+[[permission]]
+identifier = "workspace-inventory"
+description = "Choose local scan folders, manage preferences, inventory artifacts, and preview a plan."
+commands.allow = [
+    "get_settings",
+    "choose_root",
+    "remove_root",
+    "set_preferences",
+    "set_project_protection",
+    "scan",
+    "cancel_scan",
+    "dry_run",
+]

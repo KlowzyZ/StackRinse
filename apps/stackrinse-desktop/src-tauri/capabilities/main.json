@@ -1,0 +1,6 @@
+{
+  "identifier": "main-window",
+  "description": "The local desktop window can subscribe to native scan progress.",
+  "windows": ["main"],
+  "permissions": ["workspace-inventory", "core:event:allow-listen", "core:event:allow-unlisten"]
+}
