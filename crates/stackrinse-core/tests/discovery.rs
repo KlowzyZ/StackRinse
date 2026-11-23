@@ -589,7 +589,8 @@ fn root_removed_during_scan_preserves_other_roots() {
 #[cfg(windows)]
 #[test]
 fn differently_cased_artifact_keeps_actual_path_without_nested_accounting() {
-    let (_temp, root) = root();
+    let (_temp, temp_path) = root();
+    let root = temp_path.join("LOCAL/project");
     file(&root, "Cargo.toml", "");
     file(&root, "TARGET/.rustc_info.json", "{}");
     file(&root, "TARGET/dependency/Cargo.toml", "manifest");
@@ -603,7 +604,7 @@ fn differently_cased_artifact_keeps_actual_path_without_nested_accounting() {
     let excluded = inventory(
         &root,
         ScanOptions {
-            exclusions: vec!["target".into()],
+            exclusions: vec!["target".into(), "local".into()],
             ..Default::default()
         },
     );
