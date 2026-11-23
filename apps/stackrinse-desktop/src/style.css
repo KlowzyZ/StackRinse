@@ -832,6 +832,52 @@ select,
   font: 12px var(--mono);
   border-bottom: 1px solid var(--line);
 }
+.planTotal .eyelabel,
+.planTotal strong {
+  display: block;
+}
+.planTotal .eyelabel {
+  margin-bottom: 4px;
+}
+.reviewActions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 12px 0;
+}
+.scopeTotals {
+  display: flex;
+  gap: 24px;
+  margin: 12px 0;
+}
+.scopeTotals dt {
+  color: var(--muted);
+  font-size: 12px;
+}
+.scopeTotals dd {
+  font: 13px var(--mono);
+  margin-top: 4px;
+}
+.scopeTotals > div + div {
+  border-left: 1px solid var(--line);
+  padding-left: 24px;
+}
+.candidateTools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 18px;
+  background: var(--inset);
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+}
+.pageControls {
+  display: flex;
+  gap: 4px;
+}
 .planTotal strong {
   font:
     600 28px "Inter Variable",

@@ -156,7 +156,7 @@ fn measure(
         }
     }
     if blocked.is_none() && !stopped(cancel) {
-        blocked = policy::tracked(project, name).map(str::to_owned);
+        blocked = policy::tracked(project, name, cancel).map(str::to_owned);
     }
     if bytecode && (!all_bytecode || files == 0) {
         blocked.get_or_insert_with(|| "Bytecode could not be matched to adjacent source modules, or unexpected contents were found.".into());
@@ -169,14 +169,19 @@ fn measure(
                 .into(),
         ),
         None => match rules::matched_marker(&path, rule) {
-            Some(marker) => (
+            Ok(Some(marker)) => (
                 Classification::ReviewRequired,
                 format!(
                     "{} project and {marker} marker found. Review the directory for local changes.",
                     rule.ecosystem
                 ),
             ),
-            None => (
+            Err(error) => {
+                let message = format!("Cannot verify artifact evidence: {error}");
+                read_error = Some(message.clone());
+                (Classification::Protected, message)
+            }
+            Ok(None) => (
                 Classification::Protected,
                 "Artifact evidence changed during the scan.".into(),
             ),
@@ -254,7 +259,7 @@ pub fn scan(
         .build()
         .map_err(|e| ScanError::Workers(e.to_string()))?;
     let mut report = Report::default();
-    let mut last = Instant::now();
+    let mut last = None::<Instant>;
     for root in unique {
         let volume = fs::symlink_metadata(&root).map_err(|e| ScanError::InvalidRoot {
             path: root.clone(),
@@ -305,12 +310,12 @@ pub fn scan(
                 }
             }
             report.directories += 1;
-            if last.elapsed() >= Duration::from_millis(120) {
+            if last.is_none_or(|time| time.elapsed() >= Duration::from_millis(120)) {
                 progress(Progress {
                     directories: report.directories,
                     projects: report.projects.len() as u64,
                 });
-                last = Instant::now();
+                last = Some(Instant::now());
             }
             while owners
                 .last()
@@ -380,10 +385,17 @@ pub fn scan(
                         Ok(m)
                             if m.is_dir() && !policy::linked(&m) && !other_volume(&volume, &m) =>
                         {
-                            if (rule.evidence.is_empty()
-                                || rules::matched_marker(&artifact, rule).is_some())
-                                && !jobs.iter().any(|(n, _)| *n == name)
-                            {
+                            if jobs.iter().any(|(n, _)| *n == name) {
+                                continue;
+                            }
+                            let matched = match rules::matched_marker(&artifact, rule) {
+                                Ok(marker) => rule.evidence.is_empty() || marker.is_some(),
+                                Err(error) => {
+                                    warning(&mut report.warnings, error.to_string());
+                                    false
+                                }
+                            };
+                            if matched {
                                 skip.insert(artifact);
                                 jobs.push((name, rule));
                             }

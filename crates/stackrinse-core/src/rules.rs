@@ -36,6 +36,8 @@ pub const PYTHON_BYTECODE: Rule = rule(
 );
 
 pub const RULES: &[Rule] = &[
+    rule("Go", &["vendor"], &["modules.txt"], "Dependencies", "Regenerate vendored dependencies with the project’s Go toolchain and module sources. Keep local vendor patches before rebuilding.", Cost::High),
+    rule("CMake", &["build", "cmake-build-debug", "cmake-build-release"], &["CMakeCache.txt"], "Build outputs", "Reconfigure with the original CMake generator, toolchain and options, then rebuild. Local cache settings and custom outputs may be unique.", Cost::High),
     rule("Node.js", &["node_modules"], &[".package-lock.json", ".modules.yaml", ".yarn-state.yml"], "Dependencies", "Reinstall dependencies with the project’s package manager. Local package edits may be lost.", Cost::High),
     rule("Node.js", &[".next"], &["BUILD_ID", "build-manifest.json", "server/"], "Build outputs", "The next Next.js build recreates its output.", Cost::Medium),
     rule("Node.js", &[".nuxt"], &["tsconfig.json", "nuxt.d.ts"], "Build outputs", "Nuxt regenerates types and build metadata.", Cost::Medium),
@@ -53,6 +55,8 @@ fn manifest(name: &str) -> Option<&'static str> {
     match name {
         "package.json" => Some("Node.js"),
         "pyproject.toml" | "setup.py" | "setup.cfg" | "requirements.txt" => Some("Python"),
+        "go.mod" => Some("Go"),
+        "CMakeLists.txt" => Some("CMake"),
         "Cargo.toml" => Some("Rust"),
         "pom.xml" => Some("Maven"),
         "build.gradle" | "build.gradle.kts" => Some("Gradle"),
@@ -98,20 +102,48 @@ pub fn manifests(
     Ok((ecosystems, latest))
 }
 
+fn metadata_if_present(path: &Path) -> io::Result<Option<fs::Metadata>> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => Ok(Some(metadata)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(io::Error::new(
+            error.kind(),
+            format!("{}: {error}", path.display()),
+        )),
+    }
+}
+
 /// Directory markers carry a trailing slash in the rule table.
-pub fn matched_marker(path: &Path, rule: &Rule) -> Option<&'static str> {
-    rule.evidence.iter().find_map(|&marker| {
-        let directory = marker.ends_with('/');
+pub fn matched_marker(path: &Path, rule: &Rule) -> io::Result<Option<&'static str>> {
+    for &marker in rule.evidence {
         let name = marker.trim_end_matches('/');
-        let meta = fs::symlink_metadata(path.join(name)).ok()?;
-        (!linked(&meta)
-            && if directory {
+        let Some(meta) = metadata_if_present(&path.join(name))? else {
+            continue;
+        };
+        if linked(&meta)
+            || !(if marker.ends_with('/') {
                 meta.is_dir()
             } else {
                 meta.is_file()
             })
-        .then_some(name)
-    })
+        {
+            continue;
+        }
+        // A build directory can itself be a CMake source project, even in a mixed workspace.
+        if rule.category == "Build outputs"
+            && metadata_if_present(&path.join("CMakeLists.txt"))?.is_some()
+        {
+            return Ok(None);
+        }
+        if rule.ecosystem == "CMake" {
+            let index = metadata_if_present(&path.join("CMakeFiles"))?;
+            return Ok(index
+                .filter(|m| !linked(m) && m.is_dir())
+                .map(|_| "CMakeCache.txt and CMakeFiles/"));
+        }
+        return Ok(Some(name));
+    }
+    Ok(None)
 }
 
 pub fn bytecode_source(file: &Path, project: &Path) -> bool {

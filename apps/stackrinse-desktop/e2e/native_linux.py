@@ -76,6 +76,10 @@ def smoke(binary, screenshot):
                 js('document.querySelector(".sectionHead .linkBtn").click()')
                 wait_for(lambda: js('return document.querySelector(".planTotal strong")?.textContent === "2 B"'),
                          "Native dry run did not return the selected directory")
+                assert js('return document.querySelector(".reviewActions button").textContent.includes("Remove from review")')
+                js('document.querySelector(".reviewActions button").click()')
+                wait_for(lambda: js('return document.body.innerText.includes("Your review is empty")'),
+                         "Removing a preview entry did not clear the selection")
                 assert marker.read_bytes() == b"{}"
                 assert js('return document.querySelector(".reviewFoot button:last-child").disabled')
             finally:

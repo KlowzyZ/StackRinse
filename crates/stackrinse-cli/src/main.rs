@@ -134,6 +134,14 @@ fn inventory(out: &mut impl Write, report: &Report, details: bool) -> io::Result
         out,
         "Sizes below are logical candidate bytes. Physical disk use can differ.\n"
     )?;
+    let totals = report.totals();
+    writeln!(
+        out,
+        "Inventory: {} logical · {} reviewable · {} protected",
+        size(totals.logical_bytes),
+        size(totals.reviewable_bytes),
+        size(totals.protected_bytes)
+    )?;
     for project in &report.projects {
         let path = terminal_text(&project.path.to_string_lossy());
         writeln!(
@@ -299,10 +307,10 @@ fn run(cli: Cli) -> io::Result<u8> {
             writeln!(
                 out,
                 "Dry run · {} candidates · {} logical\nNo files changed.",
-                plan.candidates.len(),
-                size(plan.logical_bytes)
+                plan.candidates().len(),
+                size(plan.logical_bytes())
             )?;
-            for c in plan.candidates {
+            for c in plan.candidates() {
                 writeln!(
                     out,
                     "{:>11}   {}",

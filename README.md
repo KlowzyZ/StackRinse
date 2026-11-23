@@ -39,6 +39,8 @@ Build locally with `npm run tauri build`. Dependency installation and initial bu
 
 | Project evidence | Examples of artifact evidence |
 | --- | --- |
+| Go module (`go.mod`) | A vendored dependency directory containing a regular `modules.txt` |
+| CMake project (`CMakeLists.txt`) | A conventional out-of-source build directory containing both `CMakeCache.txt` and `CMakeFiles/` |
 | Node.js manifest | Package-manager metadata in `node_modules`, framework output markers in `.next` and `.nuxt` |
 | Python manifest | `pyvenv.cfg` inside an environment, pytest cache marker, interpreter-named bytecode beside matching source |
 | Cargo manifest | Compiler metadata or cache tag in `target` |
@@ -47,9 +49,13 @@ Build locally with `npm run tauri build`. Dependency installation and initial bu
 
 Recognition uses filesystem structure and metadata. A valid-looking name can still contain hand edits. The engine checks Git index membership in repositories using a local Git installation and protects candidates when it cannot verify the index.
 
+CMake discovery checks `build`, `cmake-build-debug` and `cmake-build-release`. A build-output directory containing its own `CMakeLists.txt` is left for project discovery. Go vendor trees and CMake builds require manual review.
+
 ## Interpreting results
 
 A candidate's logical byte count describes the files observed during traversal. It can differ substantially from the storage the filesystem would release. Read the classification, detection evidence and rebuild implications before acting. A dependency installation can contain local modifications. The date shown for a project is the newest modification time among its recognized manifests.
+
+The overview and CLI separate total, reviewable and protected logical bytes. JSON exposes them under `totals`. Reviewable bytes describe the maximum eligible dry-run selection for that report. A cancelled report has zero reviewable bytes.
 
 A partial inventory counts only the file lengths the scanner observed. A protected candidate can show zero observed bytes when its contents were skipped. Protected candidates are excluded from dry-run totals. Project protection preferences can be removed in Settings. Git and filesystem boundaries still apply on the next scan.
 

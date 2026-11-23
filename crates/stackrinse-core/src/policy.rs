@@ -2,7 +2,9 @@ use crate::ScanOptions;
 use std::{
     fs::{self, Metadata},
     path::{Component, Path},
-    process::{Command, Stdio},
+    process::{Child, Command, ExitStatus, Stdio},
+    sync::atomic::{AtomicBool, Ordering},
+    time::{Duration, Instant},
 };
 
 pub fn linked(meta: &Metadata) -> bool {
@@ -96,11 +98,36 @@ pub fn repository_boundary(path: &Path) -> Option<&'static str> {
     None
 }
 
-pub fn tracked(project: &Path, relative: &str) -> Option<&'static str> {
-    if !project
-        .ancestors()
-        .any(|d| d.join(".git").symlink_metadata().is_ok())
-    {
+fn wait_for_index(mut child: Child, cancel: &AtomicBool, timeout: Duration) -> Option<ExitStatus> {
+    let started = Instant::now();
+    let mut delay = Duration::from_millis(1);
+    while !cancel.load(Ordering::Relaxed) && started.elapsed() < timeout {
+        match child.try_wait() {
+            Ok(Some(status)) => return Some(status),
+            Ok(None) => std::thread::sleep(delay),
+            Err(_) => break,
+        }
+        delay = (delay * 2).min(Duration::from_millis(20));
+    }
+    // Reap only the Git process started for this check.
+    let _ = child.kill();
+    let _ = child.wait();
+    None
+}
+
+pub fn tracked(project: &Path, relative: &str, cancel: &AtomicBool) -> Option<&'static str> {
+    let mut repository = false;
+    for dir in project.ancestors() {
+        match fs::symlink_metadata(dir.join(".git")) {
+            Ok(_) => {
+                repository = true;
+                break;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Some("Repository boundary could not be inspected."),
+        }
+    }
+    if !repository {
         return None;
     }
     // ls-files reads the index. Disable hooks, external fsmonitor and optional
@@ -120,7 +147,7 @@ pub fn tracked(project: &Path, relative: &str) -> Option<&'static str> {
             git.env_remove(key);
         }
     }
-    let status = git
+    let child = git
         .arg("-C")
         .arg(project)
         .env("GIT_OPTIONAL_LOCKS", "0")
@@ -142,10 +169,35 @@ pub fn tracked(project: &Path, relative: &str) -> Option<&'static str> {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .status();
-    match status.ok().and_then(|s| s.code()) {
+        .spawn();
+    let status = child
+        .ok()
+        .and_then(|c| wait_for_index(c, cancel, Duration::from_secs(15)));
+    match status.and_then(|s| s.code()) {
         Some(0) => Some("The Git index contains tracked paths in this artifact."),
         Some(1) => None,
         _ => Some("The Git index could not be verified."),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn interrupted_and_timed_out_git_checks_cannot_approve_a_candidate() {
+        for (cancel, timeout) in [
+            (true, Duration::from_secs(15)),
+            (false, Duration::from_millis(10)),
+        ] {
+            // hash-object waits on our open stdin pipe and does not write an object.
+            let child = Command::new("git")
+                .args(["hash-object", "--stdin"])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .spawn()
+                .unwrap();
+            assert!(wait_for_index(child, &AtomicBool::new(cancel), timeout).is_none());
+        }
     }
 }

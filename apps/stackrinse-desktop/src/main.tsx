@@ -1,3 +1,4 @@
+import { CandidateList } from "./candidate-list";
 import { createRoot } from "react-dom/client";
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
@@ -79,6 +80,8 @@ function App() {
     [saving, setSaving] = useState(false),
     [selected, setSelected] = useState<Set<string>>(new Set()),
     [plan, setPlan] = useState<Plan | null>(null);
+  const reviewPanel = useRef<HTMLElement>(null);
+  const restoreReviewFocus = useRef(false);
   const heading = useRef<HTMLHeadingElement>(null),
     scanLock = useRef(false),
     settingLock = useRef(false);
@@ -228,22 +231,60 @@ function App() {
     });
     setPlan(null);
   }
-  async function review() {
-    navigate("Cleanup review");
-    setPlan(null);
-    if (!selected.size || !native || settingLock.current || scanLock.current)
+  async function preview(paths: Set<string>) {
+    if (!native || settingLock.current || scanLock.current) return;
+    if (!paths.size) {
+      setPlan(null);
       return;
+    }
     settingLock.current = true;
     setSaving(true);
+    setError("");
     try {
-      setPlan(await invoke<Plan>("dry_run", { paths: [...selected] }));
+      const result = await invoke<Plan>("dry_run", { paths: [...paths] });
+      setPlan(result);
+      if (result.candidates.length !== paths.size) {
+        setSelected(
+          new Set(result.candidates.map((candidate) => candidate.path)),
+        );
+        setError(
+          "The current protection settings exclude part of your selection. Scan again to refresh the inventory.",
+        );
+      }
     } catch (e) {
+      setPlan(null);
       setError(String(e));
     } finally {
       settingLock.current = false;
       setSaving(false);
     }
   }
+  function review() {
+    navigate("Cleanup review");
+    void preview(selected);
+  }
+  function removeFromReview(path: string) {
+    if (settingLock.current || scanLock.current) return;
+    const next = new Set(selected);
+    next.delete(path);
+    restoreReviewFocus.current = true;
+    setSelected(next);
+    void preview(next);
+  }
+  useEffect(() => {
+    if (!restoreReviewFocus.current || saving) return;
+    restoreReviewFocus.current = false;
+    if (
+      screen === "Cleanup review" &&
+      document.activeElement === document.body
+    ) {
+      reviewPanel.current
+        ?.querySelector<HTMLButtonElement>(
+          ".reviewActions button, .reviewFoot .linkBtn",
+        )
+        ?.focus();
+    }
+  }, [plan, saving, screen]);
   const change = (s: Screen) =>
     s === "Cleanup review" ? void review() : navigate(s);
   const active = screen === "Project details" ? "Projects" : screen;
@@ -401,7 +442,7 @@ function App() {
               />
             )}
             {screen === "Cleanup review" && (
-              <section className="panel">
+              <section className="panel" ref={reviewPanel}>
                 <header className="sectionHead">
                   <div>
                     <ClipboardCheck />
@@ -412,38 +453,60 @@ function App() {
                     Preview only
                   </span>
                 </header>
-                {saving ? (
+                {saving && !plan ? (
                   <div role="status" className="prefHint">
                     Preparing preview…
                   </div>
                 ) : plan?.candidates.length ? (
                   <>
-                    <div className="planTotal">
-                      <strong>{bytes(plan.logical_bytes)}</strong>
+                    <div
+                      className="planTotal"
+                      aria-live="polite"
+                      aria-atomic="true"
+                    >
+                      <div>
+                        <span className="eyelabel">Selected logical size</span>
+                        <strong>{bytes(plan.logical_bytes)}</strong>
+                      </div>
                       <span>
-                        logical size · {plan.candidates.length} selected
+                        {plan.candidates.length}{" "}
+                        {plan.candidates.length === 1
+                          ? "candidate"
+                          : "candidates"}
                       </span>
                     </div>
-                    {plan.candidates.map((c) => (
-                      <article className="candidate" key={c.path}>
-                        <div className="candidateTitle">
-                          <div className="rowIdentity">
-                            <strong>{basename(c.path)}</strong>
-                            <small>{c.path}</small>
+                    <CandidateList candidates={plan.candidates}>
+                      {(c) => (
+                        <article className="candidate" key={c.path}>
+                          <div className="candidateTitle">
+                            <div className="rowIdentity">
+                              <strong>{basename(c.path)}</strong>
+                              <small>{c.path}</small>
+                            </div>
+                            <b className="number">{bytes(c.logical_bytes)}</b>
                           </div>
-                          <b className="number">{bytes(c.logical_bytes)}</b>
-                        </div>
-                        <RiskLabel risk={c.classification} />
-                        <p>{c.reason}</p>
-                        <p>
-                          <b>Rebuild</b> {c.rebuild}
-                        </p>
-                      </article>
-                    ))}
+                          <div className="reviewActions">
+                            <RiskLabel risk={c.classification} />
+                            <button
+                              className="linkBtn"
+                              disabled={busy}
+                              onClick={() => removeFromReview(c.path)}
+                              aria-label={"Remove from review: " + c.path}
+                            >
+                              <X size={13} />
+                              Remove from review
+                            </button>
+                          </div>
+                          <p>{c.reason}</p>
+                          <p>
+                            <b>Rebuild</b> {c.rebuild}
+                          </p>
+                        </article>
+                      )}
+                    </CandidateList>
                     <p className="prefHint">
-                      Dry run complete. All files remain at their original
-                      locations. Verified filesystem cleanup is unavailable in
-                      this build.
+                      This preview uses the latest scan. Scan again to inspect
+                      changes on disk.
                     </p>
                   </>
                 ) : (

@@ -137,6 +137,12 @@ test("filter projects, inspect evidence and review an explicit selection", async
     page.getByRole("button", { name: "Clean selected" }),
   ).toBeDisabled();
   await expect(page.getByText("__pycache__", { exact: true })).toBeVisible();
+  if (process.env.STACKRINSE_SCREENSHOTS) {
+    mkdirSync(process.env.STACKRINSE_SCREENSHOTS, { recursive: true });
+    await page.screenshot({
+      path: join(process.env.STACKRINSE_SCREENSHOTS, "dry-run-review.png"),
+    });
+  }
 });
 
 test("appearance is restored and exclusions invalidate inventory", async ({
@@ -311,6 +317,7 @@ test("zero-byte categories and epoch manifest dates have explicit values", async
   )!;
   const report = {
     ...fixture.report,
+    totals: { logical_bytes: 0, reviewable_bytes: 0, protected_bytes: 0 },
     projects: [
       {
         ...project,
@@ -328,4 +335,64 @@ test("zero-byte categories and epoch manifest dates have explicit values", async
   await expect(page.locator(".dialCenter strong")).toHaveText("0 B");
   await expect(page.locator(".dialCenter span")).toHaveText("observed");
   await expect(page.locator(".activityRow")).toContainText(/1969|1970/);
+});
+
+test("page and filter artifact paths, then revise the dry-run selection", async ({
+  page,
+}) => {
+  const several = scanFixture((root) => {
+    for (let i = 0; i < 42; i++) {
+      const pkg = join(
+        root,
+        "signal-notebook",
+        "package-" + String(i).padStart(2, "0"),
+      );
+      mkdirSync(join(pkg, "__pycache__"), { recursive: true });
+      writeFileSync(join(pkg, "unit.py"), "pass");
+      writeFileSync(join(pkg, "__pycache__", "unit.cpython-312.pyc"), "123");
+    }
+  });
+  try {
+    const calls = await connectDesktop(page, several);
+    await page.setViewportSize({ width: 640, height: 600 });
+    await page.goto("/");
+    await page.getByRole("button", { name: "Scan folders" }).click();
+    await page
+      .getByRole("button", { name: /^signal-notebook/ })
+      .first()
+      .click();
+    await expect(page.locator(".candidate")).toHaveCount(20);
+    await page.getByRole("button", { name: "Next candidates" }).focus();
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("status")).toContainText("21–40 of 44");
+    const filter = page.getByRole("textbox", {
+      name: "Filter candidate paths",
+    });
+    await filter.fill("package-4");
+    await expect(page.locator(".candidate")).toHaveCount(2);
+    await page
+      .getByRole("button", { name: "Select for review" })
+      .first()
+      .click();
+    await page.getByRole("button", { name: "Select for review" }).click();
+    await page.getByRole("button", { name: "Review selection" }).click();
+    await expect(page.locator(".planTotal strong")).toHaveText("6 B");
+    await page
+      .getByRole("button", { name: /Remove from review: .*package-40/ })
+      .click();
+    await expect(page.locator(".planTotal strong")).toHaveText("3 B");
+    expect(calls.filter((c) => c === "dry_run")).toHaveLength(2);
+    await expect(
+      page.getByRole("button", { name: "Clean selected" }),
+    ).toBeDisabled();
+    await page
+      .getByRole("button", { name: /Remove from review: .*package-41/ })
+      .click();
+    await expect(page.getByText("Your review is empty")).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Browse projects" }),
+    ).toBeFocused();
+  } finally {
+    several.dispose();
+  }
 });

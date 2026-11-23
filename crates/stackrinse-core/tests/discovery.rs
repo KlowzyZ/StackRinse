@@ -41,10 +41,10 @@ fn polysystem_context_and_totals() {
     assert_eq!(report.projects.len(), 7);
     assert!(report.projects.iter().all(|p| p.last_activity.is_some()));
     let plan = dry_run(&report);
-    assert_eq!(plan.logical_bytes, 24);
-    assert_eq!(plan.candidates.len(), 8);
+    assert_eq!(plan.logical_bytes(), 24);
+    assert_eq!(plan.candidates().len(), 8);
     assert_eq!(
-        dry_run_selected(&report, |p, _| p.name == "hybrid").logical_bytes,
+        dry_run_selected(&report, |p, _| p.name == "hybrid").logical_bytes(),
         6
     );
 }
@@ -65,7 +65,7 @@ fn names_or_ignored_paths_alone_are_insufficient() {
     file(&r, "crate/target/photos.txt", "important");
     let report = inventory(&r, ScanOptions::default());
     assert_eq!(report.projects.len(), 1);
-    assert!(dry_run(&report).candidates.is_empty());
+    assert!(dry_run(&report).candidates().is_empty());
 }
 
 #[test]
@@ -76,7 +76,7 @@ fn mixed_bytecode_and_user_files_are_protected() {
     file(&r, "p/__pycache__/foo.cpython-312.pyc", "batch");
     let report = inventory(&r, ScanOptions::default());
     assert_eq!(
-        dry_run(&report).candidates[0].classification,
+        dry_run(&report).candidates()[0].classification,
         Classification::Rebuildable
     );
     file(&r, "p/__pycache__/notes", "changes since scan");
@@ -85,7 +85,7 @@ fn mixed_bytecode_and_user_files_are_protected() {
         next.projects[0].candidates[0].classification,
         Classification::Protected
     );
-    assert!(dry_run(&next).candidates.is_empty());
+    assert!(dry_run(&next).candidates().is_empty());
     assert_eq!(
         fs::read_to_string(r.join("p/__pycache__/notes")).unwrap(),
         "changes since scan"
@@ -111,7 +111,7 @@ fn deduplicates_overlapping_unicode_roots_and_preserves_protection() {
     assert_eq!(report.projects.len(), 1);
     assert!(report.projects[0].protected);
     assert!(report.projects[0].boundary_reason.is_none());
-    assert!(dry_run(&report).candidates.is_empty());
+    assert!(dry_run(&report).candidates().is_empty());
 }
 #[test]
 fn exclusions_apply_inside_artifacts_and_discovery() {
@@ -129,7 +129,7 @@ fn exclusions_apply_inside_artifacts_and_discovery() {
     assert_eq!(report.projects[0].logical_bytes, 2);
     assert!(!report.projects[0].candidates[0].size_complete);
     assert!(report.warnings.is_empty());
-    assert!(dry_run(&report).candidates.is_empty());
+    assert!(dry_run(&report).candidates().is_empty());
 }
 
 #[test]
@@ -162,7 +162,7 @@ fn git_markers_in_artifacts_and_worktrees_block_planning() {
         .as_deref()
         .unwrap()
         .contains("worktree"));
-    assert!(dry_run(&report).candidates.is_empty());
+    assert!(dry_run(&report).candidates().is_empty());
 }
 #[test]
 fn git_index_marks_tracked_content_protected() {
@@ -177,7 +177,9 @@ fn git_index_marks_tracked_content_protected() {
     file(&r, "package.json", "");
     file(&r, "node_modules/.package-lock.json", "{}");
     assert_eq!(
-        dry_run(&inventory(&r, Default::default())).candidates.len(),
+        dry_run(&inventory(&r, Default::default()))
+            .candidates()
+            .len(),
         1
     );
     assert!(Command::new("git")
@@ -188,7 +190,7 @@ fn git_index_marks_tracked_content_protected() {
         .success());
     let report = inventory(&r, Default::default());
     assert!(report.projects[0].candidates[0].reason.contains("tracked"));
-    assert!(dry_run(&report).candidates.is_empty());
+    assert!(dry_run(&report).candidates().is_empty());
 }
 #[cfg(unix)]
 #[test]
@@ -206,7 +208,7 @@ fn symlinks_in_roots_manifests_and_artifacts_are_never_followed() {
     let report = inventory(&r, Default::default());
     assert_eq!(report.projects.len(), 1);
     assert_eq!(report.projects[0].logical_bytes, 1);
-    assert!(dry_run(&report).candidates.is_empty());
+    assert!(dry_run(&report).candidates().is_empty());
     assert!(scan(
         &[r.join("other")],
         &Default::default(),
@@ -227,7 +229,7 @@ fn cancellation_and_invalid_paths_fail_closed() {
     )
     .unwrap();
     assert!(report.cancelled);
-    assert!(dry_run(&report).candidates.is_empty());
+    assert!(dry_run(&report).candidates().is_empty());
     let options = ScanOptions {
         exclusions: vec!["../elsewhere".into()],
         ..Default::default()
@@ -251,8 +253,8 @@ fn nested_python_bytecode_belongs_to_nearest_project() {
     file(&r, "nested/src/__pycache__/lib.cpython-312.pyc", "c");
     let report = inventory(&r, Default::default());
     let plan = dry_run(&report);
-    assert_eq!(plan.candidates.len(), 1);
-    assert_eq!(plan.candidates[0].path, r.join("src/__pycache__"));
+    assert_eq!(plan.candidates().len(), 1);
+    assert_eq!(plan.candidates()[0].path, r.join("src/__pycache__"));
 }
 
 #[cfg(windows)]
@@ -275,7 +277,7 @@ fn junction_inside_candidate_protects_it_and_skips_the_target() {
     );
     let report = inventory(&dir.join("app"), Default::default());
     assert_eq!(report.projects[0].logical_bytes, 1);
-    assert!(dry_run(&report).candidates.is_empty());
+    assert!(dry_run(&report).candidates().is_empty());
     assert!(scan(
         &[dir.join("app/target/linked")],
         &Default::default(),
@@ -306,6 +308,135 @@ fn inaccessible_artifact_subdirectory_blocks_review() {
             report.projects[0].candidates[0].classification,
             Classification::Protected
         );
-        assert!(dry_run(&report).candidates.is_empty());
+        assert!(dry_run(&report).candidates().is_empty());
     }
+}
+
+#[test]
+fn go_and_cmake_require_context_and_separate_build_outputs() {
+    let (_temp, root) = root();
+    file(&root, "go.mod", "module example.org/demo");
+    file(&root, "CMakeLists.txt", "project(demo)");
+    file(&root, "vendor/modules.txt", "# example.org/lib v1.0.0");
+    file(&root, "cmake-build-debug/CMakeCache.txt", "generated cache");
+    file(&root, "cmake-build-debug/CMakeFiles/cmake.check_cache", "");
+    // A nested source project configured in place has both markers.
+    file(&root, "build/CMakeLists.txt", "project(child)");
+    file(&root, "build/CMakeCache.txt", "must not be planned");
+    file(&root, "build/CMakeFiles/cmake.check_cache", "");
+    file(&root, "build/vendor/modules.txt", "no go.mod here");
+    file(
+        &root,
+        "cmake-build-release/CMakeCache.txt",
+        "no CMakeFiles directory",
+    );
+    let report = scan(
+        &[root.clone(), root.join("build")],
+        &Default::default(),
+        &AtomicBool::new(false),
+        |_| {},
+    )
+    .unwrap();
+    assert_eq!(report.projects.len(), 2);
+    assert_eq!(report.projects[0].ecosystems, ["CMake", "Go"]);
+    let plan = dry_run(&report);
+    assert_eq!(plan.candidates().len(), 2);
+    assert!(plan
+        .candidates()
+        .iter()
+        .all(|c| c.classification == Classification::ReviewRequired));
+    assert_eq!(plan.logical_bytes(), report.totals().reviewable_bytes);
+    assert!(plan
+        .candidates()
+        .iter()
+        .any(|c| c.path == root.join("vendor")));
+    assert!(plan
+        .candidates()
+        .iter()
+        .any(|c| c.path == root.join("cmake-build-debug")));
+}
+
+#[test]
+fn incomplete_and_cancelled_inventory_never_inflates_reviewable_size() {
+    let (_temp, root) = root();
+    file(&root, "Cargo.toml", "");
+    file(&root, "target/.rustc_info.json", "123");
+    file(&root, "go.mod", "");
+    file(&root, "vendor/modules.txt", "12345");
+    file(&root, "vendor/local/private", "excluded");
+    let mut report = inventory(
+        &root,
+        ScanOptions {
+            exclusions: vec!["local".into()],
+            ..Default::default()
+        },
+    );
+    let totals = report.totals();
+    assert_eq!(
+        (
+            totals.logical_bytes,
+            totals.reviewable_bytes,
+            totals.protected_bytes
+        ),
+        (8, 3, 5)
+    );
+    let snapshot = dry_run(&report);
+    report.cancelled = true;
+    assert_eq!(report.totals().reviewable_bytes, 0);
+    assert_eq!(report.totals().protected_bytes, 5);
+    assert!(dry_run(&report).candidates().is_empty());
+    assert_eq!(snapshot.logical_bytes(), 3);
+}
+
+#[test]
+fn a_cancelled_deep_scan_can_be_repeated_without_stale_inventory() {
+    let (_temp, root) = root();
+    let mut project = root.clone();
+    for _ in 0..32 {
+        project.push("層abc");
+    }
+    file(&project, "go.mod", "module demo");
+    file(&project, "vendor/modules.txt", "module metadata");
+    let cancel = AtomicBool::new(false);
+    let roots = std::slice::from_ref(&root);
+    let report = scan(roots, &ScanOptions::default(), &cancel, |p| {
+        if p.directories > 0 {
+            cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    })
+    .unwrap();
+    assert!(report.cancelled && dry_run(&report).candidates().is_empty());
+    let complete = inventory(&root, Default::default());
+    assert!(!complete.cancelled);
+    assert_eq!(
+        dry_run(&complete).candidates()[0].path,
+        project.join("vendor")
+    );
+}
+
+#[test]
+fn shared_gradle_and_cmake_output_is_measured_once() {
+    let (_temp, root) = root();
+    file(&root, "CMakeLists.txt", "");
+    file(&root, "build.gradle", "");
+    file(&root, "build/CMakeCache.txt", "ab");
+    file(&root, "build/CMakeFiles/cmake.check_cache", "");
+    file(&root, "build/generated/main", "cde");
+    let report = inventory(&root, Default::default());
+    assert_eq!(report.projects[0].candidates.len(), 1);
+    assert_eq!(report.totals().logical_bytes, 5);
+    assert_eq!(dry_run(&report).logical_bytes(), 5);
+}
+
+#[cfg(unix)]
+#[test]
+fn linked_secondary_cmake_marker_is_insufficient_evidence() {
+    let (_temp, root) = root();
+    file(&root, "CMakeLists.txt", "");
+    file(&root, "build/CMakeCache.txt", "cache");
+    fs::create_dir(root.join("elsewhere")).unwrap();
+    std::os::unix::fs::symlink(root.join("elsewhere"), root.join("build/CMakeFiles")).unwrap();
+    assert!(dry_run(&inventory(&root, Default::default()))
+        .candidates()
+        .is_empty());
 }

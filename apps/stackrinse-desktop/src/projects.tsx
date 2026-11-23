@@ -1,3 +1,4 @@
+import { CandidateList } from "./candidate-list";
 import { useDeferredValue, useMemo, useState } from "react";
 import {
   ArrowLeft,
@@ -243,48 +244,52 @@ export function ProjectDetails({
             Review selection <ArrowRight size={14} />
           </button>
         </header>
-        {p.candidates.map((c) => (
-          <div className="candidate" key={c.path}>
-            <div className="candidateTitle">
-              <span className="folderIcon">
-                <Folder size={18} />
-              </span>
-              <div className="rowIdentity">
-                <strong>{basename(c.path)}</strong>
-                <small>{c.path}</small>
+        <CandidateList candidates={p.candidates}>
+          {(c) => (
+            <div className="candidate" key={c.path}>
+              <div className="candidateTitle">
+                <span className="folderIcon">
+                  <Folder size={18} />
+                </span>
+                <div className="rowIdentity">
+                  <strong>{basename(c.path)}</strong>
+                  <small>{c.path}</small>
+                </div>
+                <span className="number">
+                  {bytes(c.logical_bytes)}
+                  {!c.size_complete && " observed"}
+                </span>
               </div>
-              <span className="number">
-                {bytes(c.logical_bytes)}
-                {!c.size_complete && " observed"}
-              </span>
+              <div className="candidateInfo">
+                <RiskLabel
+                  risk={protectedNow ? "protected" : c.classification}
+                />
+                <span>{c.category}</span>
+              </div>
+              <p>{c.reason}</p>
+              <p>
+                <b>Rebuild</b> {c.rebuild}
+              </p>
+              <div className="candidateBottom">
+                <span title={costs[c.cost]}>Rebuild cost · {c.cost}</span>
+                <button
+                  aria-pressed={selected.has(c.path)}
+                  disabled={
+                    locked || protectedNow || c.classification === "protected"
+                  }
+                  onClick={() => toggle(c.path)}
+                >
+                  {selected.has(c.path) ? (
+                    <Check size={14} />
+                  ) : (
+                    <SlidersHorizontal size={14} />
+                  )}{" "}
+                  {selected.has(c.path) ? "Selected" : "Select for review"}
+                </button>
+              </div>
             </div>
-            <div className="candidateInfo">
-              <RiskLabel risk={protectedNow ? "protected" : c.classification} />
-              <span>{c.category}</span>
-            </div>
-            <p>{c.reason}</p>
-            <p>
-              <b>Rebuild</b> {c.rebuild}
-            </p>
-            <div className="candidateBottom">
-              <span title={costs[c.cost]}>Rebuild cost · {c.cost}</span>
-              <button
-                aria-pressed={selected.has(c.path)}
-                disabled={
-                  locked || protectedNow || c.classification === "protected"
-                }
-                onClick={() => toggle(c.path)}
-              >
-                {selected.has(c.path) ? (
-                  <Check size={14} />
-                ) : (
-                  <SlidersHorizontal size={14} />
-                )}{" "}
-                {selected.has(c.path) ? "Selected" : "Select for review"}
-              </button>
-            </div>
-          </div>
-        ))}
+          )}
+        </CandidateList>
         {!p.candidates.length && (
           <Empty Icon={LockKeyhole} title="No recognized candidates">
             This project has no measured artifact directories.
