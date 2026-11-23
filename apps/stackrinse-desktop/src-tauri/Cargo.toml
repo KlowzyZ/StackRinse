@@ -1,0 +1,21 @@
+[package]
+name = "stackrinse-desktop"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+stackrinse-core = { path = "../../../crates/stackrinse-core" }
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = "1"
+fs2 = "0.4"
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tempfile = "3"
+
+[features]
+custom-protocol = ["tauri/custom-protocol"]
