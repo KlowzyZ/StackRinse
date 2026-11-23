@@ -599,4 +599,15 @@ fn differently_cased_artifact_keeps_actual_path_without_nested_accounting() {
     assert_eq!(report.projects.len(), 1);
     assert_eq!(report.projects[0].candidates[0].path, root.join("TARGET"));
     assert_eq!(report.totals().logical_bytes, 12);
+
+    let excluded = inventory(
+        &root,
+        ScanOptions {
+            exclusions: vec!["target".into()],
+            ..Default::default()
+        },
+    );
+    assert_eq!(excluded.projects.len(), 1);
+    assert!(excluded.projects[0].candidates.is_empty());
+    assert_eq!(excluded.totals().logical_bytes, 0);
 }

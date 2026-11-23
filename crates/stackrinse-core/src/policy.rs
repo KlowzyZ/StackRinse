@@ -71,8 +71,11 @@ pub fn excluded(path: &Path, opts: &ScanOptions) -> bool {
         if e.is_absolute() {
             path.starts_with(e)
         } else {
-            path.components()
-                .any(|c| matches!(c, Component::Normal(s) if Path::new(s) == e))
+            path.components().any(|component| {
+                matches!(component, Component::Normal(name)
+                    if name == e.as_os_str()
+                        || (cfg!(windows) && name.eq_ignore_ascii_case(e.as_os_str())))
+            })
         }
     })
 }
