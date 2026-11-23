@@ -82,6 +82,19 @@ def smoke(binary, screenshot):
                          "Removing a preview entry did not clear the selection")
                 assert marker.read_bytes() == b"{}"
                 assert js('return document.querySelector(".reviewFoot button:last-child").disabled')
+                # Keep settings and selection identical, then make the replacement scan fail.
+                root.rename(root.with_name("moved"))
+                def command_error(command, arguments):
+                    script = """
+                        const [command, args, done] = arguments;
+                        window.__TAURI_INTERNALS__.invoke(command, args)
+                            .then(() => done(null), error => done(String(error)));
+                    """
+                    return webdriver("POST", endpoint + "/execute/async", {
+                        "script": script, "args": [command, arguments],
+                    })
+                assert "Cannot scan" in command_error("scan", {})
+                assert "Scan a folder first" in command_error("dry_run", {"paths": [str(output)]})
             finally:
                 webdriver("DELETE", endpoint)
         finally:
