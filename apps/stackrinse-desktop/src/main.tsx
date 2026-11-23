@@ -70,7 +70,9 @@ function App() {
   const [settings, setSettings] = useState<Settings>(initialSettings),
     [report, setReport] = useState<Report | null>(null),
     [lastScan, setLastScan] = useState(""),
-    [scanning, setScanning] = useState(false),
+    [scanPhase, setScanPhase] = useState<"idle" | "choosing" | "scanning">(
+      "idle",
+    ),
     [cancelling, setCancelling] = useState(false),
     [visited, setVisited] = useState(0);
   const [error, setError] = useState(""),
@@ -80,7 +82,8 @@ function App() {
   const heading = useRef<HTMLHeadingElement>(null),
     scanLock = useRef(false),
     settingLock = useRef(false);
-  const busy = scanning || saving;
+  const scanning = scanPhase === "scanning";
+  const busy = scanPhase !== "idle" || saving;
   useEffect(() => {
     if (!native) return;
     let live = true;
@@ -140,11 +143,7 @@ function App() {
     setDetail(null);
     if (screen === "Project details") navigate("Projects");
   };
-  async function update(
-    command: string,
-    args?: Record<string, unknown>,
-    reset = false,
-  ) {
+  async function update(command: string, args?: Record<string, unknown>) {
     if (scanLock.current || settingLock.current || !requireDesktop()) return;
     settingLock.current = true;
     setSaving(true);
@@ -152,7 +151,14 @@ function App() {
     try {
       const next = await invoke<Settings>(command, args);
       setSettings(next);
-      if (reset) clearInventory();
+      const scopeChanged = (
+        ["roots", "excludedNames", "protectedProjects"] as const
+      ).some(
+        (key) =>
+          next[key].length !== settings[key].length ||
+          next[key].some((value, index) => value !== settings[key][index]),
+      );
+      if (scopeChanged) clearInventory();
     } catch (e) {
       setError(String(e));
     } finally {
@@ -164,17 +170,18 @@ function App() {
     if (scanLock.current || settingLock.current || !requireDesktop()) return;
     scanLock.current = true;
     setError("");
-    setScanning(true);
     setVisited(0);
     setCancelling(false);
     try {
       if (!settings.roots.length) {
+        setScanPhase("choosing");
         const s = await invoke<Settings>("choose_root");
         setSettings(s);
         if (!s.roots.length) return;
       }
       setPlan(null);
       setSelected(new Set());
+      setScanPhase("scanning");
       const result = await invoke<Report>("scan");
       setReport(result);
       setLastScan(
@@ -190,7 +197,7 @@ function App() {
       setError(String(e));
     } finally {
       scanLock.current = false;
-      setScanning(false);
+      setScanPhase("idle");
       setCancelling(false);
     }
   }
@@ -307,7 +314,7 @@ function App() {
                     : subtitles[screen]}
                 </p>
               </div>
-              {["Overview", "Projects"].includes(screen) &&
+              {(scanning || ["Overview", "Projects"].includes(screen)) &&
                 (scanning ? (
                   <button disabled={cancelling} onClick={() => void cancel()}>
                     <Square size={14} />
@@ -320,7 +327,9 @@ function App() {
                     onClick={() => void scan()}
                   >
                     <ScanLine size={17} />
-                    Scan folders
+                    {scanPhase === "choosing"
+                      ? "Choosing folder…"
+                      : "Scan folders"}
                   </button>
                 ))}
             </div>
@@ -366,16 +375,12 @@ function App() {
                   settings.protectedProjects.includes(detail.path)
                 }
                 protect={() =>
-                  void update(
-                    "set_project_protection",
-                    {
-                      path: detail.path,
-                      protected: !settings.protectedProjects.includes(
-                        detail.path,
-                      ),
-                    },
-                    true,
-                  )
+                  void update("set_project_protection", {
+                    path: detail.path,
+                    protected: !settings.protectedProjects.includes(
+                      detail.path,
+                    ),
+                  })
                 }
                 locked={busy || !!report?.cancelled}
                 selected={selected}
@@ -473,21 +478,16 @@ function App() {
               <Preferences
                 settings={settings}
                 busy={busy}
-                choose={() => void update("choose_root", undefined, true)}
-                remove={(root) => void update("remove_root", { root }, true)}
+                choose={() => void update("choose_root")}
+                remove={(root) => void update("remove_root", { root })}
                 unprotect={(path) =>
-                  void update(
-                    "set_project_protection",
-                    { path, protected: false },
-                    true,
-                  )
+                  void update("set_project_protection", {
+                    path,
+                    protected: false,
+                  })
                 }
                 save={(appearance, excludedNames) =>
-                  void update(
-                    "set_preferences",
-                    { appearance, excludedNames },
-                    excludedNames !== settings.excludedNames,
-                  )
+                  void update("set_preferences", { appearance, excludedNames })
                 }
               />
             )}

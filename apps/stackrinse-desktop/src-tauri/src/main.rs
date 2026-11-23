@@ -199,16 +199,13 @@ fn selected_plan(
     if previous.roots != current.roots || previous.excluded_names != current.excluded_names {
         return Err("Scan again to use the updated locations and exclusions.".into());
     }
-    Ok(stackrinse_core::dry_run_selected(
-        report,
-        |project, candidate| {
-            selected.contains(&candidate.path)
-                && !current
-                    .protected_projects
-                    .iter()
-                    .any(|p| project.path.starts_with(p) || p.starts_with(&candidate.path))
-        },
-    ))
+    Ok(stackrinse_core::dry_run_selected(report, |_, candidate| {
+        selected.contains(&candidate.path)
+            && !current
+                .protected_projects
+                .iter()
+                .any(|p| candidate.path.starts_with(p) || p.starts_with(&candidate.path))
+    }))
 }
 
 fn main() {
@@ -238,13 +235,14 @@ mod tests {
     fn dry_run_intersects_selection_with_inventory_and_current_protection() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().canonicalize().unwrap();
-        let artifact = root.join("__pycache__");
-        fs::create_dir(&artifact).unwrap();
+        let package = root.join("package");
+        let artifact = package.join("__pycache__");
+        fs::create_dir_all(&artifact).unwrap();
         fs::write(root.join("pyproject.toml"), "[project]\nname='sample'").unwrap();
-        fs::write(root.join("sample.py"), "pass").unwrap();
+        fs::write(package.join("sample.py"), "pass").unwrap();
         fs::write(artifact.join("sample.cpython-311.pyc"), "bytecode").unwrap();
         let settings = Settings {
-            roots: vec![root.clone()],
+            roots: vec![root],
             ..Settings::default()
         };
         let report = stackrinse_core::scan(
@@ -258,14 +256,18 @@ mod tests {
             &settings,
             &settings,
             &report,
-            vec![artifact.clone(), root.join("sample.py"), artifact.clone()],
+            vec![
+                artifact.clone(),
+                package.join("sample.py"),
+                artifact.clone(),
+            ],
         )
         .unwrap();
         assert_eq!(plan.candidates.len(), 1);
         assert_eq!(plan.candidates[0].path, artifact);
         assert_eq!(plan.logical_bytes, 8);
         let protected = Settings {
-            protected_projects: vec![root],
+            protected_projects: vec![package],
             ..settings.clone()
         };
         assert!(
