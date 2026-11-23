@@ -66,6 +66,33 @@ pub fn system_path(path: &Path) -> bool {
     }
 }
 
+#[cfg(windows)]
+fn same_basename(name: &std::ffi::OsStr, excluded: &std::ffi::OsStr) -> bool {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Globalization::{CompareStringOrdinal, CSTR_EQUAL};
+
+    if name.as_encoded_bytes().is_ascii() && excluded.as_encoded_bytes().is_ascii() {
+        return name.eq_ignore_ascii_case(excluded);
+    }
+    let name: Vec<_> = name.encode_wide().collect();
+    let excluded: Vec<_> = excluded.encode_wide().collect();
+    // SAFETY: both slices remain live and the explicit lengths count UTF-16 units.
+    unsafe {
+        CompareStringOrdinal(
+            name.as_ptr(),
+            name.len() as i32,
+            excluded.as_ptr(),
+            excluded.len() as i32,
+            1,
+        ) == CSTR_EQUAL
+    }
+}
+
+#[cfg(not(windows))]
+fn same_basename(name: &std::ffi::OsStr, excluded: &std::ffi::OsStr) -> bool {
+    name == excluded
+}
+
 pub fn excluded(path: &Path, opts: &ScanOptions) -> bool {
     opts.exclusions.iter().any(|e| {
         if e.is_absolute() {
@@ -74,9 +101,8 @@ pub fn excluded(path: &Path, opts: &ScanOptions) -> bool {
             // Traversal checks every visited directory. Keep case folding on
             // the current entry so an outside ancestor (such as AppData/Local)
             // cannot silently exclude the selected workspace.
-            path.file_name().is_some_and(|name| {
-                name == e.as_os_str() || (cfg!(windows) && name.eq_ignore_ascii_case(e.as_os_str()))
-            })
+            path.file_name()
+                .is_some_and(|name| same_basename(name, e.as_os_str()))
         }
     })
 }

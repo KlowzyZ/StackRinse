@@ -709,3 +709,23 @@ fn mixed_case_nested_bytecode_keeps_its_project_owner() {
     let report = inventory(&dir, Default::default());
     assert_eq!(dry_run(&report).logical_bytes(), 3);
 }
+
+#[cfg(windows)]
+#[test]
+fn unicode_basename_exclusion_prunes_discovery_and_candidate_contents() {
+    let (_tmp, root) = root();
+    file(&root, "app/Cargo.toml", "");
+    file(&root, "app/target/.rustc_info.json", "{}");
+    file(&root, "app/target/GÉNÉRÉ/private", "secret");
+    file(&root, "Généré/package.json", "{}");
+    let report = inventory(
+        &root,
+        ScanOptions {
+            exclusions: vec!["généré".into()],
+            ..Default::default()
+        },
+    );
+    assert_eq!(report.projects.len(), 1);
+    assert_eq!(report.totals().logical_bytes, 2);
+    assert!(dry_run(&report).candidates().is_empty());
+}
