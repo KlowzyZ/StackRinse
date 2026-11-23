@@ -479,8 +479,10 @@ main {
   margin-bottom: 10px;
 }
 .legend button {
-  padding: 5px 2px;
-  gap: 7px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  padding: 5px 4px;
+  gap: 3px 7px;
   border: 0;
   background: transparent;
   border-radius: 3px;
@@ -498,6 +500,17 @@ main {
   height: 7px;
   border-radius: 2px;
   flex: none;
+}
+.categoryTrack {
+  grid-column: 2 / -1;
+  height: 2px;
+  border-radius: 1px;
+  overflow: hidden;
+  background: var(--line);
+}
+.categoryTrack > span {
+  display: block;
+  height: 100%;
 }
 .legend button b {
   margin-left: auto;
@@ -518,6 +531,30 @@ main {
   width: 5px;
   height: 5px;
   background: var(--dim);
+}
+.signal.measured {
+  background: var(--accent);
+}
+.signal.partial {
+  background: var(--warn);
+}
+.projectMeta .protectionNote {
+  margin-left: auto;
+  padding-left: 14px;
+  border-left: 2px solid var(--warn);
+  max-width: 32ch;
+}
+.protectionNote span {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 550;
+}
+.protectionNote svg {
+  color: var(--warn);
+}
+.protectionNote small {
+  color: var(--muted);
 }
 .footRight {
   margin-left: auto;
@@ -951,6 +988,17 @@ select,
   }
 }
 @media (max-width: 735px) {
+  .filters {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .filters .search {
+    grid-column: 1 / -1;
+  }
+  .filters select {
+    width: 100%;
+    min-width: 0;
+  }
   .instrumentBody {
     grid-template-columns: 1fr;
   }

@@ -173,11 +173,12 @@ async fn scan(app: AppHandle, session: State<'_, Session>) -> Result<Arc<Report>
 }
 
 #[tauri::command]
-fn cancel_scan(session: State<'_, Session>) -> Result<()> {
+fn cancel_scan(session: State<'_, Session>) -> Result<bool> {
     if let Some(flag) = lock(&session.scan)?.as_ref() {
         flag.store(true, Ordering::Relaxed);
+        return Ok(true);
     }
-    Ok(())
+    Ok(false)
 }
 
 #[tauri::command]

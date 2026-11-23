@@ -55,6 +55,13 @@ fn names_or_ignored_paths_alone_are_insufficient() {
     file(&r, "unrelated/target/.rustc_info.json", "1");
     file(&r, "crate/Cargo.toml", "");
     file(&r, "crate/.gitignore", "target/");
+    fs::create_dir_all(r.join("crate/target/.rustc_info.json")).unwrap();
+    file(&r, "crate/pom.xml", "");
+    file(
+        &r,
+        "crate/target/classes",
+        "a user file, not a classes directory",
+    );
     file(&r, "crate/target/photos.txt", "important");
     let report = inventory(&r, ScanOptions::default());
     assert_eq!(report.projects.len(), 1);
@@ -103,6 +110,7 @@ fn deduplicates_overlapping_unicode_roots_and_preserves_protection() {
     .unwrap();
     assert_eq!(report.projects.len(), 1);
     assert!(report.projects[0].protected);
+    assert!(report.projects[0].boundary_reason.is_none());
     assert!(dry_run(&report).candidates.is_empty());
 }
 #[test]
@@ -119,6 +127,8 @@ fn exclusions_apply_inside_artifacts_and_discovery() {
     let report = inventory(&r, options);
     assert_eq!(report.projects.len(), 1);
     assert_eq!(report.projects[0].logical_bytes, 2);
+    assert!(!report.projects[0].candidates[0].size_complete);
+    assert!(report.warnings.is_empty());
     assert!(dry_run(&report).candidates.is_empty());
 }
 
@@ -135,6 +145,23 @@ fn git_markers_in_artifacts_and_worktrees_block_planning() {
     fs::create_dir_all(r.join("outer/nested/.git")).unwrap();
     let report = inventory(&r, Default::default());
     assert_eq!(report.projects.len(), 3);
+    let overlapping = inventory(
+        &r,
+        ScanOptions {
+            protected_projects: vec![r.join("worktree")],
+            ..Default::default()
+        },
+    );
+    let worktree = overlapping
+        .projects
+        .iter()
+        .find(|p| p.name == "worktree")
+        .unwrap();
+    assert!(worktree
+        .boundary_reason
+        .as_deref()
+        .unwrap()
+        .contains("worktree"));
     assert!(dry_run(&report).candidates.is_empty());
 }
 #[test]
@@ -273,6 +300,8 @@ fn inaccessible_artifact_subdirectory_blocks_review() {
     let report = inventory(&dir, Default::default());
     fs::set_permissions(&locked, original).unwrap();
     if !can_read_without_permissions {
+        assert!(!report.projects[0].candidates[0].size_complete);
+        assert!(!report.warnings.is_empty());
         assert_eq!(
             report.projects[0].candidates[0].classification,
             Classification::Protected

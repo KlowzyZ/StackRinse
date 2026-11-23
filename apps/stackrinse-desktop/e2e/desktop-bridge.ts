@@ -8,6 +8,7 @@ export async function connectDesktop(
   fixture: ReturnType<typeof scanFixture>,
   options: {
     waitForCancel?: boolean;
+    cancelReady?: () => boolean;
     pickFolder?: () => Promise<boolean>;
   } = {},
 ) {
@@ -56,8 +57,10 @@ export async function connectDesktop(
           }
           return fixture.report;
         case "cancel_scan":
-          finishScan?.();
-          return;
+          if (!finishScan || (options.cancelReady && !options.cancelReady()))
+            return false;
+          finishScan();
+          return true;
         case "dry_run": {
           const paths = new Set(args.paths as string[]);
           const candidates = fixture.plan.candidates.filter((candidate) =>

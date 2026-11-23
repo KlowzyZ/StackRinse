@@ -23,9 +23,11 @@ import { Empty, ProjectRow, RiskLabel } from "./shared";
 
 export function Explorer({
   projects,
+  scanned,
   open,
 }: {
   projects: Project[];
+  scanned: boolean;
   open: (p: Project) => void;
 }) {
   const [query, setQuery] = useState(""),
@@ -111,14 +113,14 @@ export function Explorer({
           }}
         >
           <option value="size">Largest first</option>
-          <option value="activity">Last active</option>
+          <option value="activity">Latest manifest change</option>
           <option value="name">Name A–Z</option>
         </select>
       </div>
       <header className="sectionHead">
         <div>
           <Folder />
-          {filtered.length} projects
+          {filtered.length} {filtered.length === 1 ? "project" : "projects"}
         </div>
         <span className="eyelabel">Candidate size</span>
       </header>
@@ -129,7 +131,11 @@ export function Explorer({
         <Empty
           Icon={FolderSearch}
           title={
-            projects.length ? "No matching projects" : "No projects discovered"
+            projects.length
+              ? "No matching projects"
+              : scanned
+                ? "No projects discovered"
+                : "Ready to scan"
           }
         >
           {projects.length
@@ -167,7 +173,7 @@ const costs = {
 };
 export function ProjectDetails({
   p,
-  protectedNow,
+  preference,
   protect,
   locked,
   selected,
@@ -175,19 +181,28 @@ export function ProjectDetails({
   review,
 }: {
   p: Project;
-  protectedNow: boolean;
+  preference: boolean;
   protect: () => void;
   locked: boolean;
   selected: Set<string>;
   toggle: (s: string) => void;
   review: () => void;
 }) {
+  const protectedNow = p.protected || preference;
+  const fixedReason =
+    p.boundary_reason ||
+    (p.protected && !preference
+      ? "Protected by a parent folder preference."
+      : null);
   return (
     <>
       <section className="panel projectMeta">
         <div>
           <span className="eyelabel">Logical candidate size</span>
-          <strong>{bytes(p.logical_bytes)}</strong>
+          <strong>
+            {bytes(p.logical_bytes)}
+            {p.candidates.some((c) => !c.size_complete) && " observed"}
+          </strong>
         </div>
         <div>
           <span className="eyelabel">Technologies</span>
@@ -197,10 +212,22 @@ export function ProjectDetails({
           <span className="eyelabel">Manifest modified</span>
           <strong>{activity(p)}</strong>
         </div>
-        <button disabled={locked} aria-pressed={protectedNow} onClick={protect}>
-          <Shield size={15} />
-          {protectedNow ? "Unprotect project" : "Protect project"}
-        </button>
+        {fixedReason ? (
+          <div className="protectionNote">
+            <span>
+              <LockKeyhole size={14} />{" "}
+              {p.boundary_reason
+                ? "Repository protection"
+                : "Inherited protection"}
+            </span>
+            <small>{fixedReason}</small>
+          </div>
+        ) : (
+          <button disabled={locked} aria-pressed={preference} onClick={protect}>
+            <Shield size={15} />
+            {preference ? "Remove protection preference" : "Protect project"}
+          </button>
+        )}
       </section>
       <section className="panel">
         <header className="sectionHead">
@@ -208,7 +235,11 @@ export function ProjectDetails({
             <Layers3 />
             Cleanup candidates
           </div>
-          <button className="linkBtn" onClick={review}>
+          <button
+            className="linkBtn"
+            onClick={review}
+            disabled={locked || !selected.size}
+          >
             Review selection <ArrowRight size={14} />
           </button>
         </header>
@@ -222,7 +253,10 @@ export function ProjectDetails({
                 <strong>{basename(c.path)}</strong>
                 <small>{c.path}</small>
               </div>
-              <span className="number">{bytes(c.logical_bytes)}</span>
+              <span className="number">
+                {bytes(c.logical_bytes)}
+                {!c.size_complete && " observed"}
+              </span>
             </div>
             <div className="candidateInfo">
               <RiskLabel risk={protectedNow ? "protected" : c.classification} />

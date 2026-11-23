@@ -41,7 +41,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev librsvg2-dev libayatana-appindicator3-dev
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev librsvg2-dev libayatana-appindicator3-dev webkit2gtk-driver xvfb xauth
       - name: Check formatting
         run: cargo fmt --all -- --check
       - name: Install desktop dependencies
@@ -62,3 +62,13 @@ jobs:
         if: runner.os == 'Linux'
         working-directory: apps/stackrinse-desktop
         run: npm run test:e2e
+
+      - name: Exercise the embedded Linux webview and native dry run
+        if: runner.os == 'Linux'
+        run: xvfb-run -a dbus-run-session -- python3 apps/stackrinse-desktop/e2e/native_linux.py target/debug/stackrinse-desktop "$RUNNER_TEMP/native-overview.png"
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Linux'
+        with:
+          name: linux-native-overview
+          path: ${{ runner.temp }}/native-overview.png
+          retention-days: 7

@@ -15,6 +15,8 @@ The Cargo workspace contains a headless discovery library, a terminal client and
 
 A scan receives explicit roots, exclusions and protected project paths. Manifest discovery identifies a project and its ecosystems. Rules associate an ecosystem with candidate directory names, additional local evidence, expected rebuild consequences and qualitative cost. The engine reports absolute paths, classification explanations, file lengths, manifest modification times and warnings.
 
+A project reports its effective protection and any mandatory repository-boundary reason. Each candidate reports whether its logical size is complete. The renderer uses these fields to explain protection and partial measurements.
+
 The CLI formats the report directly. The native desktop host runs traversal outside the UI thread and forwards throttled progress events. The renderer uses the report for the category ring, sorting and detailed inspection. Only the native side touches the filesystem. Selecting a candidate for review does not grant a capability to delete it.
 
 ## Local state

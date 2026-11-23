@@ -30,6 +30,22 @@ function Distribution({
   const [active, setActive] = useState<string | null>(null);
   const total = entries.reduce((n, e) => n + e[1], 0);
   const selected = entries.find((e) => e[0] === active);
+  const share =
+    selected && total > 0 ? Math.round((selected[1] / total) * 100) : null;
+  const dialValue = !scanned
+    ? "—"
+    : !selected
+      ? entries.length
+      : share === null
+        ? bytes(selected[1])
+        : share + "%";
+  const dialUnit = !selected
+    ? entries.length === 1
+      ? "category"
+      : "categories"
+    : share === null
+      ? "observed"
+      : "of inventory";
   let offset = 0;
   return (
     <div className="distribution">
@@ -37,9 +53,14 @@ function Distribution({
         className="dial"
         role="img"
         aria-label={
-          scanned
-            ? "Artifact category distribution in logical bytes"
-            : "Storage map awaiting scan"
+          selected
+            ? selected[0] +
+              ", " +
+              bytes(selected[1]) +
+              (share === null ? "" : ", " + share + "% of inventory")
+            : scanned
+              ? "Artifact category distribution in logical bytes"
+              : "Storage map awaiting scan"
         }
       >
         <svg viewBox="0 0 200 200" aria-hidden="true">
@@ -80,14 +101,8 @@ function Distribution({
         </svg>
         <div className="dialCenter">
           <Layers3 size={20} />
-          <strong>
-            {scanned
-              ? selected && total
-                ? Math.round((selected[1] / total) * 100) + "%"
-                : entries.length
-              : "—"}
-          </strong>
-          <span>{selected ? "of inventory" : "categories"}</span>
+          <strong>{dialValue}</strong>
+          <span>{dialUnit}</span>
         </div>
       </div>
       <div className="legend">
@@ -102,10 +117,22 @@ function Distribution({
               <i style={{ background: palette[i % palette.length] }} />
               <span>{name}</span>
               <b>{bytes(n)}</b>
+              <span className="categoryTrack" aria-hidden="true">
+                <span
+                  style={{
+                    width: (total ? (100 * n) / total : 0) + "%",
+                    background: palette[i % palette.length],
+                  }}
+                />
+              </span>
             </button>
           ))
         ) : (
-          <p>Category sizes appear after a workspace scan.</p>
+          <p>
+            {scanned
+              ? "No artifact categories measured."
+              : "Category sizes appear after a workspace scan."}
+          </p>
         )}
       </div>
     </div>
@@ -134,11 +161,13 @@ export function Overview({
     };
     const sizes = { ...counts };
     let size = 0,
-      count = 0;
+      count = 0,
+      partialSize = false;
     for (const p of projects)
       for (const c of p.candidates) {
         size += c.logical_bytes;
         count++;
+        partialSize ||= !c.size_complete;
         counts[c.classification]++;
         sizes[c.classification] += c.logical_bytes;
         groups.set(c.category, (groups.get(c.category) || 0) + c.logical_bytes);
@@ -147,17 +176,20 @@ export function Overview({
       size,
       count,
       counts,
+      partialSize,
       sizes,
       entries: [...groups.entries()].sort((a, b) => b[1] - a[1]),
       top: [...projects]
         .sort((a, b) => b.logical_bytes - a.logical_bytes)
         .slice(0, 5),
       recent: [...projects]
-        .filter((p) => p.last_activity)
+        .filter((p) => p.last_activity !== null)
         .sort((a, b) => b.last_activity! - a.last_activity!)
         .slice(0, 3),
     };
   }, [report]);
+  const partial =
+    data.partialSize || !!report?.cancelled || !!report?.warnings.length;
   return (
     <>
       <section className="instrument">
@@ -177,7 +209,9 @@ export function Overview({
             </div>
             <p>
               {report
-                ? "Measured across recognized artifact directories."
+                ? partial
+                  ? "Observed logical bytes from a partial inventory."
+                  : "Measured across recognized artifact directories."
                 : "Scan a folder to measure its build artifacts."}
             </p>
             <dl className="metrics">
@@ -202,9 +236,13 @@ export function Overview({
           <Distribution entries={data.entries} scanned={!!report} />
         </div>
         <footer className="instrumentFoot">
-          <span className="signal" />
+          <span
+            className={
+              "signal " + (partial ? "partial" : report ? "measured" : "")
+            }
+          />
           {report
-            ? report.cancelled || report.warnings.length > 0
+            ? partial
               ? "Partial inventory"
               : "Inventory measured"
             : "Awaiting first scan"}
@@ -213,6 +251,18 @@ export function Overview({
           </span>
         </footer>
       </section>
+      {!!report?.warnings.length && (
+        <details className="panel issues">
+          <summary>
+            <CircleHelp size={16} />
+            {report.warnings.length} scan{" "}
+            {report.warnings.length === 1 ? "warning" : "warnings"}
+          </summary>
+          {report.warnings.map((w, i) => (
+            <p key={i}>{w}</p>
+          ))}
+        </details>
+      )}
       <div className="overviewGrid">
         <section className="panel">
           <header className="sectionHead">
@@ -227,7 +277,7 @@ export function Overview({
           {data.top.length ? (
             data.top.map((p) => <ProjectRow key={p.path} p={p} open={open} />)
           ) : (
-            <Empty title="No projects discovered">
+            <Empty title={report ? "No projects discovered" : "Ready to scan"}>
               {report
                 ? "Try another workspace folder."
                 : "Choose a scan root to discover your projects."}
@@ -240,6 +290,7 @@ export function Overview({
               <ShieldCheck />
               Safety summary
             </div>
+            <span className="eyelabel">Count · Logical size</span>
           </header>
           <div className="riskRows">
             {(Object.keys(data.counts) as Risk[]).map((r) => (
@@ -262,7 +313,7 @@ export function Overview({
           <header className="sectionHead">
             <div>
               <Clock3 />
-              Recent project activity
+              Recent manifest changes
             </div>
             <span className="muted">Manifest modified</span>
           </header>
@@ -277,17 +328,6 @@ export function Overview({
             </button>
           ))}
         </section>
-      )}
-      {!!report?.warnings.length && (
-        <details className="panel issues">
-          <summary>
-            <CircleHelp size={16} />
-            {report.warnings.length} scan warning(s)
-          </summary>
-          {report.warnings.map((w, i) => (
-            <p key={i}>{w}</p>
-          ))}
-        </details>
       )}
     </>
   );

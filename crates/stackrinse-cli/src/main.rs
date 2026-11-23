@@ -138,10 +138,15 @@ fn inventory(out: &mut impl Write, report: &Report, details: bool) -> io::Result
         let path = terminal_text(&project.path.to_string_lossy());
         writeln!(
             out,
-            "{:>11}   {}   [{}]{}",
+            "{:>11}   {}   [{}]{}{}",
             size(project.logical_bytes),
             path,
             project.ecosystems.join(", "),
+            if project.candidates.iter().any(|c| !c.size_complete) {
+                "   partial size"
+            } else {
+                ""
+            },
             if project.protected {
                 "   protected"
             } else {
@@ -165,7 +170,11 @@ fn inventory(out: &mut impl Write, report: &Report, details: bool) -> io::Result
                     out,
                     "    {} · {} · {} · {}",
                     terminal_text(&c.path.to_string_lossy()),
-                    size(c.logical_bytes),
+                    if c.size_complete {
+                        size(c.logical_bytes)
+                    } else {
+                        format!("{} observed (partial)", size(c.logical_bytes))
+                    },
                     classification,
                     c.category
                 )?;

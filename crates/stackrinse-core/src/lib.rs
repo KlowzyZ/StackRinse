@@ -42,6 +42,8 @@ pub struct Candidate {
     pub path: PathBuf,
     pub category: String,
     pub logical_bytes: u64,
+    /// False when policy boundaries or read errors skipped entries.
+    pub size_complete: bool,
     pub classification: Classification,
     pub reason: String,
     pub rebuild: String,
@@ -58,6 +60,8 @@ pub struct Project {
     /// Most recent recognized manifest mtime, in Unix seconds.
     pub last_activity: Option<u64>,
     pub protected: bool,
+    /// Mandatory project protection, independent of user preferences.
+    pub boundary_reason: Option<String>,
     pub candidates: Vec<Candidate>,
 }
 

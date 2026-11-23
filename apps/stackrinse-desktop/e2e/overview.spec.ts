@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { scanFixture } from "./workspace";
 import { connectDesktop } from "./desktop-bridge";
@@ -173,11 +173,19 @@ test("appearance is restored and exclusions invalidate inventory", async ({
 test("cancelling a scan makes the partial result read-only", async ({
   page,
 }) => {
-  await connectDesktop(page, fixture, { waitForCancel: true });
+  let ready = false;
+  await connectDesktop(page, fixture, {
+    waitForCancel: true,
+    cancelReady: () => ready,
+  });
   await page.goto("/");
   await page.getByRole("button", { name: "Scan folders" }).click();
   await page.getByRole("button", { name: "History", exact: true }).click();
-  await page.getByRole("button", { name: "Cancel scan" }).click();
+  const cancel = page.getByRole("button", { name: "Cancel scan" });
+  await cancel.click();
+  await expect(cancel).toBeEnabled();
+  ready = true;
+  await cancel.click();
   await expect(page.getByText(/Scan cancelled\./)).toBeVisible();
   await page
     .getByRole("button", { name: /^atlas-console/ })
@@ -241,4 +249,83 @@ test("dismissing the folder picker leaves discovery idle and preserves an existi
   await expect(add).toBeEnabled();
   await page.getByRole("button", { name: "Overview", exact: true }).click();
   await expect(page.getByText("Inventory measured")).toBeVisible();
+});
+
+test("repository protection and partial sizes stay visible while inspecting a filtered list", async ({
+  page,
+}) => {
+  const guarded = scanFixture((root) => {
+    writeFileSync(join(root, "relay-engine", ".git"), "gitdir: ../unavailable");
+    mkdirSync(join(root, "relay-engine", "target", ".git"));
+  });
+  try {
+    await connectDesktop(page, guarded);
+    await page.goto("/");
+    await page.getByRole("button", { name: "Scan folders" }).click();
+    await expect(page.locator(".instrumentFoot")).toContainText(
+      "Partial inventory",
+    );
+    await page.getByRole("button", { name: "Explore", exact: true }).click();
+    const search = page.getByRole("textbox", { name: "Search projects" });
+    await search.fill("relay");
+    await page.getByRole("button", { name: /relay-engine/ }).click();
+    await expect(
+      page.getByText("Repository protection", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", {
+        name: /protect project|remove protection preference/i,
+      }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: "Select for review" }),
+    ).toBeDisabled();
+    if (process.env.STACKRINSE_SCREENSHOTS) {
+      mkdirSync(process.env.STACKRINSE_SCREENSHOTS, { recursive: true });
+      await page.screenshot({
+        path: join(
+          process.env.STACKRINSE_SCREENSHOTS,
+          "repository-protection.png",
+        ),
+      });
+    }
+    await expect(page.locator(".candidateTitle .number")).toContainText(
+      "observed",
+    );
+    await page
+      .locator("main")
+      .getByRole("button", { name: "Projects", exact: true })
+      .click();
+    await expect(search).toHaveValue("relay");
+    await expect(page.locator(".projectRow")).toHaveCount(1);
+  } finally {
+    guarded.dispose();
+  }
+});
+
+test("zero-byte categories and epoch manifest dates have explicit values", async ({
+  page,
+}) => {
+  const project = fixture.report.projects.find(
+    (p) => p.name === "relay-engine",
+  )!;
+  const report = {
+    ...fixture.report,
+    projects: [
+      {
+        ...project,
+        logical_bytes: 0,
+        last_activity: 0,
+        candidates: project.candidates.map((c) => ({ ...c, logical_bytes: 0 })),
+      },
+    ],
+  };
+  await connectDesktop(page, { ...fixture, report });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Scan folders" }).click();
+  await expect(page.locator(".dialCenter span")).toHaveText("category");
+  await page.getByRole("button", { name: /^Build outputs/ }).click();
+  await expect(page.locator(".dialCenter strong")).toHaveText("0 B");
+  await expect(page.locator(".dialCenter span")).toHaveText("observed");
+  await expect(page.locator(".activityRow")).toContainText(/1969|1970/);
 });

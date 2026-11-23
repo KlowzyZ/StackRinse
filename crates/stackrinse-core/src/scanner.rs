@@ -49,14 +49,12 @@ fn normalize_root(path: &Path) -> Result<PathBuf, ScanError> {
     Ok(canonical)
 }
 
-fn warning(report: &mut Report, message: String) {
+fn warning(warnings: &mut Vec<String>, message: String) {
     const LIMIT: usize = 200;
-    if report.warnings.len() < LIMIT {
-        report.warnings.push(message);
-    } else if report.warnings.len() == LIMIT {
-        report
-            .warnings
-            .push("Additional scan warnings suppressed.".into());
+    if warnings.len() < LIMIT {
+        warnings.push(message);
+    } else if warnings.len() == LIMIT {
+        warnings.push("Additional scan warnings suppressed.".into());
     }
 }
 
@@ -81,10 +79,12 @@ fn measure(
     options: &ScanOptions,
     cancel: &AtomicBool,
     protection: Option<&str>,
-) -> Candidate {
+) -> (Candidate, Option<String>) {
     let path = project.join(name);
     let mut blocked = protection.map(str::to_owned);
     let mut bytes = 0u64;
+    let mut read_error = None;
+    let mut size_complete = true;
     let mut files = 0u64;
     let bytecode = name == "__pycache__";
     let mut all_bytecode = true;
@@ -100,6 +100,8 @@ fn measure(
         let entry = match entry {
             Ok(entry) => entry,
             Err(e) => {
+                size_complete = false;
+                read_error.get_or_insert_with(|| format!("{}: {e}", path.display()));
                 blocked = Some(format!("Incomplete inventory: {e}"));
                 continue;
             }
@@ -113,6 +115,7 @@ fn measure(
                 .any(|p| entry_path.starts_with(p))
             || entry_path.to_str().is_none()
         {
+            size_complete = false;
             blocked = Some("Contains repository metadata, a protected path, an exclusion, or an unrepresentable name.".into());
             if entry.file_type().is_dir() {
                 walk.skip_current_dir();
@@ -122,6 +125,8 @@ fn measure(
         let meta = match fs::symlink_metadata(entry_path) {
             Ok(m) => m,
             Err(e) => {
+                size_complete = false;
+                read_error.get_or_insert_with(|| format!("{}: {e}", entry_path.display()));
                 blocked = Some(format!("Metadata unavailable: {e}"));
                 if entry.file_type().is_dir() {
                     walk.skip_current_dir();
@@ -133,6 +138,7 @@ fn measure(
             || base_meta.as_ref().map_or(true, |m| other_volume(m, &meta))
             || !(meta.is_dir() || meta.is_file())
         {
+            size_complete = false;
             blocked = Some("Contains a filesystem link, mount boundary, or special file.".into());
             if entry.file_type().is_dir() {
                 walk.skip_current_dir();
@@ -162,27 +168,33 @@ fn measure(
             "Only interpreter-named bytecode with corresponding source modules was observed."
                 .into(),
         ),
-        None => (
-            Classification::ReviewRequired,
-            format!(
-                "{} project and {} marker found. Review the directory for local changes.",
-                rule.ecosystem,
-                rule.evidence
-                    .iter()
-                    .find(|n| path.join(n).exists())
-                    .unwrap_or(&"generator")
+        None => match rules::matched_marker(&path, rule) {
+            Some(marker) => (
+                Classification::ReviewRequired,
+                format!(
+                    "{} project and {marker} marker found. Review the directory for local changes.",
+                    rule.ecosystem
+                ),
             ),
-        ),
+            None => (
+                Classification::Protected,
+                "Artifact evidence changed during the scan.".into(),
+            ),
+        },
     };
-    Candidate {
-        path,
-        category: rule.category.into(),
-        logical_bytes: bytes,
-        classification,
-        reason,
-        rebuild: rule.rebuild.into(),
-        cost: rule.cost,
-    }
+    (
+        Candidate {
+            path,
+            category: rule.category.into(),
+            logical_bytes: bytes,
+            size_complete,
+            classification,
+            reason,
+            rebuild: rule.rebuild.into(),
+            cost: rule.cost,
+        },
+        read_error,
+    )
 }
 
 fn normalize_options(options: &ScanOptions) -> Result<ScanOptions, ScanError> {
@@ -261,7 +273,7 @@ pub fn scan(
             let entry = match entry {
                 Ok(e) => e,
                 Err(e) => {
-                    warning(&mut report, e.to_string());
+                    warning(&mut report.warnings, e.to_string());
                     continue;
                 }
             };
@@ -287,7 +299,7 @@ pub fn scan(
                     continue;
                 }
                 Err(e) => {
-                    warning(&mut report, format!("{}: {e}", path.display()));
+                    warning(&mut report.warnings, format!("{}: {e}", path.display()));
                     walk.skip_current_dir();
                     continue;
                 }
@@ -315,7 +327,7 @@ pub fn scan(
                         let protection = owner
                             .protected
                             .then_some("The owning project is protected.");
-                        let candidate = measure(
+                        let (candidate, read_error) = measure(
                             parent,
                             "__pycache__",
                             &rules::PYTHON_BYTECODE,
@@ -324,6 +336,9 @@ pub fn scan(
                             protection,
                         );
                         if !stopped(cancel) {
+                            if let Some(message) = read_error {
+                                warning(&mut report.warnings, message);
+                            }
                             owner.logical_bytes =
                                 owner.logical_bytes.saturating_add(candidate.logical_bytes);
                             owner.candidates.push(candidate);
@@ -336,7 +351,7 @@ pub fn scan(
             let (ecosystems, last_activity) = match rules::manifests(path, cancel) {
                 Ok(data) => data,
                 Err(e) => {
-                    warning(&mut report, format!("{}: {e}", path.display()));
+                    warning(&mut report.warnings, format!("{}: {e}", path.display()));
                     walk.skip_current_dir();
                     continue;
                 }
@@ -344,15 +359,13 @@ pub fn scan(
             if ecosystems.is_empty() {
                 continue;
             }
-            let protection = if options
+            let boundary = policy::repository_boundary(path);
+            let preference = options
                 .protected_projects
                 .iter()
-                .any(|p| path.starts_with(p))
-            {
-                Some("This project is protected by a user preference.")
-            } else {
-                policy::repository_boundary(path)
-            };
+                .any(|p| path.starts_with(p));
+            let protection = boundary
+                .or(preference.then_some("This project is protected by a user preference."));
             let mut jobs = Vec::new();
             for rule in rules::RULES
                 .iter()
@@ -364,8 +377,11 @@ pub fn scan(
                         continue;
                     }
                     match fs::symlink_metadata(&artifact) {
-                        Ok(m) if m.is_dir() && !policy::linked(&m) => {
-                            if rules::evidence(&artifact, rule)
+                        Ok(m)
+                            if m.is_dir() && !policy::linked(&m) && !other_volume(&volume, &m) =>
+                        {
+                            if (rule.evidence.is_empty()
+                                || rules::matched_marker(&artifact, rule).is_some())
                                 && !jobs.iter().any(|(n, _)| *n == name)
                             {
                                 skip.insert(artifact);
@@ -373,13 +389,13 @@ pub fn scan(
                             }
                         }
                         Err(e) if e.kind() != io::ErrorKind::NotFound => {
-                            warning(&mut report, format!("{}: {e}", artifact.display()))
+                            warning(&mut report.warnings, format!("{}: {e}", artifact.display()))
                         }
                         _ => {}
                     }
                 }
             }
-            let candidates: Vec<_> = pool.install(|| {
+            let measurements: Vec<_> = pool.install(|| {
                 jobs.par_iter()
                     .map(|(n, r)| measure(path, n, r, &options, cancel, protection))
                     .collect()
@@ -387,6 +403,15 @@ pub fn scan(
             if stopped(cancel) {
                 break;
             }
+            let candidates: Vec<_> = measurements
+                .into_iter()
+                .map(|(candidate, read_error)| {
+                    if let Some(message) = read_error {
+                        warning(&mut report.warnings, message);
+                    }
+                    candidate
+                })
+                .collect();
             let logical_bytes = candidates
                 .iter()
                 .fold(0u64, |sum, c| sum.saturating_add(c.logical_bytes));
@@ -402,6 +427,7 @@ pub fn scan(
                 logical_bytes,
                 last_activity,
                 protected: protection.is_some(),
+                boundary_reason: boundary.map(str::to_owned),
                 candidates,
             });
         }

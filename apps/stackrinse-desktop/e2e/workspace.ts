@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 // Each payload is a small, allocated file. All reported sizes come from the core.
-export function scanFixture() {
+export function scanFixture(prepare?: (root: string) => void) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "stackrinse-qa-")));
   const put = (name: string, data: string | number) => {
     const path = join(root, name);
@@ -53,6 +53,7 @@ export function scanFixture() {
       "<project><artifactId>catalog-service</artifactId></project>",
     );
     put("catalog-service/target/classes/org/example/Catalog.class", 920_000);
+    prepare?.(root);
     const cli = (args: string[]) =>
       JSON.parse(
         execFileSync(
