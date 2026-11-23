@@ -120,7 +120,7 @@ export function Explorer({
       <header className="sectionHead">
         <div>
           <Folder />
-          {filtered.length} projects
+          {filtered.length} {filtered.length === 1 ? "project" : "projects"}
         </div>
         <span className="eyelabel">Candidate size</span>
       </header>

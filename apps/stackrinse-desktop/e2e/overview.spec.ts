@@ -323,6 +323,7 @@ test("zero-byte categories and epoch manifest dates have explicit values", async
   await connectDesktop(page, { ...fixture, report });
   await page.goto("/");
   await page.getByRole("button", { name: "Scan folders" }).click();
+  await expect(page.locator(".dialCenter span")).toHaveText("category");
   await page.getByRole("button", { name: /^Build outputs/ }).click();
   await expect(page.locator(".dialCenter strong")).toHaveText("0 B");
   await expect(page.locator(".dialCenter span")).toHaveText("observed");

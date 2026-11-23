@@ -40,7 +40,9 @@ function Distribution({
         ? bytes(selected[1])
         : share + "%";
   const dialUnit = !selected
-    ? "categories"
+    ? entries.length === 1
+      ? "category"
+      : "categories"
     : share === null
       ? "observed"
       : "of inventory";
