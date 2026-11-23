@@ -44,11 +44,14 @@ fn inventory_and_size_filter_use_real_projects() {
     assert!(output.status.success(), "{:?}", output);
     let report: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(report["projects"][0]["name"], "sample app");
-    let filtered = run("scan", fixture.path(), &["--json", "--min-size", "1TB"]);
     assert_eq!(
-        serde_json::from_slice::<Value>(&filtered.stdout).unwrap()["projects"],
-        serde_json::json!([])
+        report["totals"]["reviewable_bytes"],
+        report["projects"][0]["logical_bytes"]
     );
+    let filtered = run("scan", fixture.path(), &["--json", "--min-size", "1TB"]);
+    let filtered: Value = serde_json::from_slice(&filtered.stdout).unwrap();
+    assert_eq!(filtered["totals"]["logical_bytes"], 0);
+    assert_eq!(filtered["projects"], serde_json::json!([]));
 }
 
 #[test]

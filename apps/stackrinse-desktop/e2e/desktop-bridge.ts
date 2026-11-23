@@ -52,7 +52,11 @@ export async function connectDesktop(
           if (options.waitForCancel) {
             return new Promise((resolve) => {
               finishScan = () =>
-                resolve({ ...fixture.report, cancelled: true });
+                resolve({
+                  ...fixture.report,
+                  totals: { ...fixture.report.totals, reviewable_bytes: 0 },
+                  cancelled: true,
+                });
             });
           }
           return fixture.report;

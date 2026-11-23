@@ -2,7 +2,7 @@
 mod policy;
 mod rules;
 mod scanner;
-use serde::Serialize;
+use serde::{ser::SerializeStruct, Serialize, Serializer};
 use std::path::PathBuf;
 
 pub use scanner::{scan, ScanError};
@@ -65,7 +65,7 @@ pub struct Project {
     pub candidates: Vec<Candidate>,
 }
 
-#[derive(Default, Clone, Debug, Serialize)]
+#[derive(Default, Clone, Debug)]
 pub struct Report {
     pub projects: Vec<Project>,
     pub warnings: Vec<String>,
@@ -73,10 +73,63 @@ pub struct Report {
     pub directories: u64,
 }
 
+#[derive(Default, Debug, Serialize)]
+pub struct InventoryTotals {
+    pub logical_bytes: u64,
+    pub reviewable_bytes: u64,
+    pub protected_bytes: u64,
+}
+
+fn protected(project: &Project, candidate: &Candidate) -> bool {
+    project.protected
+        || !candidate.size_complete
+        || candidate.classification == Classification::Protected
+}
+
+impl Report {
+    /// Computed from the current view, including after CLI size filtering.
+    pub fn totals(&self) -> InventoryTotals {
+        let mut totals = InventoryTotals::default();
+        for project in &self.projects {
+            for candidate in &project.candidates {
+                let bytes = candidate.logical_bytes;
+                totals.logical_bytes = totals.logical_bytes.saturating_add(bytes);
+                if protected(project, candidate) {
+                    totals.protected_bytes = totals.protected_bytes.saturating_add(bytes);
+                } else if !self.cancelled {
+                    totals.reviewable_bytes = totals.reviewable_bytes.saturating_add(bytes);
+                }
+            }
+        }
+        totals
+    }
+}
+
+impl Serialize for Report {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut view = serializer.serialize_struct("Report", 5)?;
+        view.serialize_field("projects", &self.projects)?;
+        view.serialize_field("warnings", &self.warnings)?;
+        view.serialize_field("cancelled", &self.cancelled)?;
+        view.serialize_field("directories", &self.directories)?;
+        view.serialize_field("totals", &self.totals())?;
+        view.end()
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct Plan {
-    pub candidates: Vec<Candidate>,
-    pub logical_bytes: u64,
+    candidates: Vec<Candidate>,
+    logical_bytes: u64,
+}
+
+impl Plan {
+    pub fn candidates(&self) -> &[Candidate] {
+        &self.candidates
+    }
+    pub fn logical_bytes(&self) -> u64 {
+        self.logical_bytes
+    }
 }
 
 /// Inventory eligible for further review. No executable operation is issued.
@@ -89,9 +142,12 @@ pub fn dry_run_selected(report: &Report, selected: impl Fn(&Project, &Candidate)
     let candidates: Vec<_> = report
         .projects
         .iter()
-        .filter(|p| !report.cancelled && !p.protected)
-        .flat_map(|p| p.candidates.iter().filter(move |c| selected(p, c)))
-        .filter(|c| c.classification != Classification::Protected)
+        .filter(|_| !report.cancelled)
+        .flat_map(|p| {
+            p.candidates
+                .iter()
+                .filter(move |c| !protected(p, c) && selected(p, c))
+        })
         .cloned()
         .collect();
     let logical_bytes = candidates

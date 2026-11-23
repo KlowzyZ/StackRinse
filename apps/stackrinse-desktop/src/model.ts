@@ -20,6 +20,11 @@ export interface Project {
   candidates: Candidate[];
 }
 export interface Report {
+  totals: {
+    logical_bytes: number;
+    reviewable_bytes: number;
+    protected_bytes: number;
+  };
   projects: Project[];
   warnings: string[];
   cancelled: boolean;

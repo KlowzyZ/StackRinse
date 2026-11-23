@@ -18,8 +18,13 @@ Protection has two sources. Users can protect a project and its descendants thro
 
 An incomplete candidate contributes observed bytes to inventory and is excluded from the plan. Expected skips at policy boundaries can produce partial sizes without an operating-system error. An enumeration or metadata error inside a candidate also produces a scan warning. Cancellation makes the whole report ineligible for planning.
 
+Git index verification has a 15-second per-process deadline. A failed or timed-out check protects the candidate. Cancellation also stops an outstanding Git check. A stalled filesystem call can still delay completion.
+
 ## Requirements for enabling writes
 
 An executor needs a reviewed, immutable selection bound to object identities, a fresh check of each ancestor and candidate, repository ownership and tracked-content checks, and an operation-time boundary that survives replacement and rename. Each supported platform needs dedicated adversarial temporary fixtures. Refuse the operation where the platform cannot enforce the boundary.
 
 Record intent before a mutation, then record each item's outcome. A failure or interruption can leave a partial result. Report planned logical bytes, data moved to Trash and confirmed space recovery separately. Advertise recovery only when restoration has been exercised on the relevant platform. Permanent deletion requires independent consent.
+
+
+A future recoverable operation needs a distinct authorization model. On Windows, bind every selected object to its volume and file identity and recheck reparse points, ancestor identities and Git protection through operation-time handles. Treat a changed identity, incomplete inspection, newly applied protection or unavailable recovery mechanism as a refusal for that item. Exercise those outcomes on disposable volumes before introducing any operation API. Today's serialized preview contains paths and observations only.

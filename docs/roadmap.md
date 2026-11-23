@@ -4,7 +4,11 @@
 
 The shared scanner, CLI and desktop workbench support read-only discovery and dry-run review. CI compiles the native application and runs workspace tests on Linux, macOS and Windows.
 
-The next milestone is a packaged read-only preview. Exercise native pickers, keyboard and screen-reader navigation, high-DPI displays, large inventories and cancellation on slow volumes. Record platform, filesystem, fixture size and observed gaps for each run.
+The next milestone is hands-on Windows evaluation, followed by qualification of a packaged read-only preview. Exercise native pickers, keyboard and screen-reader navigation, high-DPI displays, large inventories and cancellation on slow volumes. Record platform, filesystem, fixture size and observed gaps for each run.
+
+### Further ecosystem coverage
+
+Android modules with Gradle manifests use the existing Gradle rule. Android-specific intermediate layouts need independent fixtures. Flutter shares Dart project metadata and needs SDK-specific evidence. Godot imported assets and Unity library caches need fixtures that distinguish generated imports from editor state and local changes. Global Go build caches and arbitrary CMake binary directories remain outside the project-local rules.
 
 ## Safe cleaning
 

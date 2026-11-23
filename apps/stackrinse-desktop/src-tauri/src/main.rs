@@ -264,9 +264,9 @@ mod tests {
             ],
         )
         .unwrap();
-        assert_eq!(plan.candidates.len(), 1);
-        assert_eq!(plan.candidates[0].path, artifact);
-        assert_eq!(plan.logical_bytes, 8);
+        assert_eq!(plan.candidates().len(), 1);
+        assert_eq!(plan.candidates()[0].path, artifact);
+        assert_eq!(plan.logical_bytes(), 8);
         let protected = Settings {
             protected_projects: vec![package],
             ..settings.clone()
@@ -274,7 +274,7 @@ mod tests {
         assert!(
             selected_plan(&settings, &protected, &report, vec![artifact.clone()])
                 .unwrap()
-                .candidates
+                .candidates()
                 .is_empty()
         );
         let changed = Settings {

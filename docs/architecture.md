@@ -19,6 +19,12 @@ A project reports its effective protection and any mandatory repository-boundary
 
 The CLI formats the report directly. The native desktop host runs traversal outside the UI thread and forwards throttled progress events. The renderer uses the report for the category ring, sorting and detailed inspection. Only the native side touches the filesystem. Selecting a candidate for review does not grant a capability to delete it.
 
+## Review snapshots
+
+The core constructs an owned `Plan` from complete, eligible candidates in one report. Its Rust accessors expose a slice and a logical-byte total. CLI JSON and desktop IPC preserve the snapshot fields. Each nonempty change to the review selection requests a fresh plan from the host, which intersects the requested paths with the scan and current protections. Clearing the selection discards the preview.
+
+Report totals are calculated when requested so a filtered CLI view and its JSON totals refer to the same projects. Discovery keeps the full inventory in memory. The explorer shows 40 projects per page and detail and review views show up to 20 candidates per page.
+
 ## Local state
 
 The desktop uses Tauri's per-user application configuration directory for `dev.klowzy.stackrinse`. Its settings JSON contains absolute paths, exclusions, protected project paths and appearance preferences. It is sensitive local metadata. Updates validate the configuration and replace it via a sibling temporary file under a lock. OS user permissions and a trustworthy user-owned configuration directory are assumed. Scan results live in memory. CLI JSON is written to stdout and can contain full paths.

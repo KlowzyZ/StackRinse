@@ -160,12 +160,10 @@ export function Overview({
       protected: 0,
     };
     const sizes = { ...counts };
-    let size = 0,
-      count = 0,
+    let count = 0,
       partialSize = false;
     for (const p of projects)
       for (const c of p.candidates) {
-        size += c.logical_bytes;
         count++;
         partialSize ||= !c.size_complete;
         counts[c.classification]++;
@@ -173,7 +171,6 @@ export function Overview({
         groups.set(c.category, (groups.get(c.category) || 0) + c.logical_bytes);
       }
     return {
-      size,
       count,
       counts,
       partialSize,
@@ -204,16 +201,28 @@ export function Overview({
           <div className="measurement">
             <span className="eyelabel">Candidate inventory</span>
             <div className="bigNumber">
-              {report ? bytes(data.size) : "—"}
+              {report ? bytes(report.totals.logical_bytes) : "—"}
               {!report && <span> bytes</span>}
             </div>
-            <p>
-              {report
-                ? partial
-                  ? "Observed logical bytes from a partial inventory."
-                  : "Measured across recognized artifact directories."
-                : "Scan a folder to measure its build artifacts."}
-            </p>
+            {report ? (
+              <>
+                <dl className="scopeTotals">
+                  <div>
+                    <dt>Reviewable</dt>
+                    <dd>{bytes(report.totals.reviewable_bytes)}</dd>
+                  </div>
+                  <div>
+                    <dt>Protected</dt>
+                    <dd>{bytes(report.totals.protected_bytes)}</dd>
+                  </div>
+                </dl>
+                {partial && (
+                  <p>Observed logical bytes from a partial inventory.</p>
+                )}
+              </>
+            ) : (
+              <p>Scan a folder to measure its build artifacts.</p>
+            )}
             <dl className="metrics">
               {[
                 [FolderOpen, "Projects", report?.projects.length],
