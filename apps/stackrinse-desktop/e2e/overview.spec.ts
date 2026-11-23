@@ -176,6 +176,7 @@ test("cancelling a scan makes the partial result read-only", async ({
   await connectDesktop(page, fixture, { waitForCancel: true });
   await page.goto("/");
   await page.getByRole("button", { name: "Scan folders" }).click();
+  await page.getByRole("button", { name: "History", exact: true }).click();
   await page.getByRole("button", { name: "Cancel scan" }).click();
   await expect(page.getByText(/Scan cancelled\./)).toBeVisible();
   await page
@@ -197,4 +198,47 @@ test("web preview explains local access and can dismiss the error", async ({
   );
   await page.getByRole("button", { name: "Dismiss error" }).click();
   await expect(page.getByRole("alert")).toHaveCount(0);
+});
+
+test("dismissing the folder picker leaves discovery idle and preserves an existing scan", async ({
+  page,
+}) => {
+  let finishPicker!: (picked: boolean) => void;
+  const calls = await connectDesktop(page, fixture, {
+    pickFolder: () =>
+      new Promise((resolve) => {
+        finishPicker = resolve;
+      }),
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Scan folders" }).click();
+  await expect.poll(() => calls.includes("choose_root")).toBe(true);
+  await expect(
+    page.getByRole("button", { name: "Choosing folder…" }),
+  ).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Cancel scan" })).toHaveCount(
+    0,
+  );
+  finishPicker(false);
+  await expect(
+    page.getByRole("button", { name: "Scan folders" }),
+  ).toBeEnabled();
+  expect(calls).not.toContain("scan");
+
+  await page.getByRole("button", { name: "Scan folders" }).click();
+  await expect
+    .poll(() => calls.filter((c) => c === "choose_root").length)
+    .toBe(2);
+  finishPicker(true);
+  await expect(page.getByText("Inventory measured")).toBeVisible();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  const add = page.getByRole("button", { name: "Add folder" });
+  await add.click();
+  await expect
+    .poll(() => calls.filter((c) => c === "choose_root").length)
+    .toBe(3);
+  finishPicker(false);
+  await expect(add).toBeEnabled();
+  await page.getByRole("button", { name: "Overview", exact: true }).click();
+  await expect(page.getByText("Inventory measured")).toBeVisible();
 });

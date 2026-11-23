@@ -6,7 +6,10 @@ import type { scanFixture } from "./workspace";
 export async function connectDesktop(
   page: Page,
   fixture: ReturnType<typeof scanFixture>,
-  options: { waitForCancel?: boolean } = {},
+  options: {
+    waitForCancel?: boolean;
+    pickFolder?: () => Promise<boolean>;
+  } = {},
 ) {
   let settings = {
     roots: [] as string[],
@@ -18,13 +21,14 @@ export async function connectDesktop(
   let finishScan: (() => void) | undefined;
   await page.exposeFunction(
     "stackrinseTestInvoke",
-    (command: string, args: Record<string, unknown>) => {
+    async (command: string, args: Record<string, unknown>) => {
       commands.push(command);
       switch (command) {
         case "get_settings":
           break;
         case "choose_root":
-          settings.roots = [fixture.root];
+          if (!options.pickFolder || (await options.pickFolder()))
+            settings.roots = [fixture.root];
           break;
         case "remove_root":
           settings.roots = settings.roots.filter((root) => root !== args.root);
