@@ -508,15 +508,13 @@ fn godot_linked_evidence_does_not_create_a_candidate() {
 
 #[cfg(unix)]
 #[test]
-fn unreadable_and_non_unicode_directories_leave_sibling_inventory_available() {
-    use std::os::unix::{ffi::OsStrExt, fs::PermissionsExt};
+fn unreadable_directory_leaves_sibling_inventory_available() {
+    use std::os::unix::fs::PermissionsExt;
 
     let (_temp, root) = root();
     file(&root, "locked/hidden/package.json", "{}");
     file(&root, "readable/Cargo.toml", "");
     file(&root, "readable/target/.rustc_info.json", "{}");
-    let unusual = root.join(std::ffi::OsStr::from_bytes(b"non-unicode-\xff"));
-    file(&unusual, "go.mod", "");
     let locked = root.join("locked");
     let original = fs::metadata(&locked).unwrap().permissions();
     fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
@@ -524,13 +522,28 @@ fn unreadable_and_non_unicode_directories_leave_sibling_inventory_available() {
     let report = inventory(&root, Default::default());
     fs::set_permissions(&locked, original).unwrap();
 
-    assert!(report.warnings.iter().any(|w| w.contains("non-Unicode")));
-    assert!(report.projects.iter().all(|p| p.path != unusual));
     if denied {
         assert!(report.warnings.iter().any(|w| w.contains("locked")));
         assert_eq!(report.projects.len(), 1);
     }
     assert_eq!(dry_run(&report).logical_bytes(), 2);
+}
+
+// macOS APFS rejects filenames with invalid UTF-8 before the scanner sees them.
+#[cfg(target_os = "linux")]
+#[test]
+fn non_unicode_directory_is_skipped_with_a_warning() {
+    use std::os::unix::ffi::OsStrExt;
+
+    let (_temp, root) = root();
+    let unusual = root.join(std::ffi::OsStr::from_bytes(b"non-unicode-\xff"));
+    file(&unusual, "go.mod", "");
+    file(&root, "readable/Cargo.toml", "");
+    let report = inventory(&root, Default::default());
+
+    assert!(report.warnings.iter().any(|w| w.contains("non-Unicode")));
+    assert_eq!(report.projects.len(), 1);
+    assert_eq!(report.projects[0].path, root.join("readable"));
 }
 
 #[test]
