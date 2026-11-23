@@ -39,6 +39,7 @@ Build locally with `npm run tauri build`. Dependency installation and initial bu
 
 | Project evidence | Examples of artifact evidence |
 | --- | --- |
+| Godot project (`project.godot`) | Godot 4 editor cache in `.godot/` containing both `.gdignore` and `imported/` |
 | Go module (`go.mod`) | A vendored dependency directory containing a regular `modules.txt` |
 | CMake project (`CMakeLists.txt`) | A conventional out-of-source build directory containing both `CMakeCache.txt` and `CMakeFiles/` |
 | Node.js manifest | Package-manager metadata in `node_modules`, framework output markers in `.next` and `.nuxt` |

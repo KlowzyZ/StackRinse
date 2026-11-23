@@ -71,8 +71,16 @@ pub fn excluded(path: &Path, opts: &ScanOptions) -> bool {
         if e.is_absolute() {
             path.starts_with(e)
         } else {
-            path.components()
-                .any(|c| matches!(c, Component::Normal(s) if Path::new(s) == e))
+            // Traversal checks every visited directory. Keep case folding on
+            // the current entry so an outside ancestor (such as AppData/Local)
+            // cannot silently exclude the selected workspace.
+            (cfg!(windows)
+                && path
+                    .file_name()
+                    .is_some_and(|name| name.eq_ignore_ascii_case(e.as_os_str())))
+                || path
+                    .components()
+                    .any(|c| matches!(c, Component::Normal(name) if name == e.as_os_str()))
         }
     })
 }
