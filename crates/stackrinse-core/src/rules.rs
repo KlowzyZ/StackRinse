@@ -37,16 +37,16 @@ pub const PYTHON_BYTECODE: Rule = rule(
 
 pub const RULES: &[Rule] = &[
     rule("Node.js", &["node_modules"], &[".package-lock.json", ".modules.yaml", ".yarn-state.yml"], "Dependencies", "Reinstall dependencies with the project’s package manager. Local package edits may be lost.", Cost::High),
-    rule("Node.js", &[".next"], &["BUILD_ID", "build-manifest.json", "server"], "Build outputs", "The next Next.js build recreates its output.", Cost::Medium),
+    rule("Node.js", &[".next"], &["BUILD_ID", "build-manifest.json", "server/"], "Build outputs", "The next Next.js build recreates its output.", Cost::Medium),
     rule("Node.js", &[".nuxt"], &["tsconfig.json", "nuxt.d.ts"], "Build outputs", "Nuxt regenerates types and build metadata.", Cost::Medium),
     rule("Rust", &["target"], &[".rustc_info.json", "CACHEDIR.TAG"], "Build outputs", "Cargo recompiles dependencies and local crates. Custom artifacts may also be present.", Cost::High),
     rule("Python", &[".venv", "venv"], &["pyvenv.cfg"], "Virtual environments", "Recreate the environment and reinstall its packages. Manually installed packages may be difficult to reproduce.", Cost::High),
     rule("Python", &[".pytest_cache"], &["CACHEDIR.TAG"], "Test caches", "pytest recreates cache entries. Last-failed and local plugin state may be lost.", Cost::Low),
     PYTHON_BYTECODE,
     rule(".NET", &["obj"], &["project.assets.json"], "Build outputs", "Restore NuGet packages and rebuild intermediate files.", Cost::Medium),
-    rule(".NET", &["bin"], &["Debug", "Release"], "Build outputs", "Rebuild the project. Unpublished binaries or manually copied files may be present.", Cost::Medium),
-    rule("Maven", &["target"], &["classes", "maven-status"], "Build outputs", "Run the Maven build to recreate compiled classes and packages.", Cost::Medium),
-    rule("Gradle", &["build"], &["classes", "generated"], "Build outputs", "Run the Gradle build to regenerate classes and outputs.", Cost::Medium),
+    rule(".NET", &["bin"], &["Debug/", "Release/"], "Build outputs", "Rebuild the project. Unpublished binaries or manually copied files may be present.", Cost::Medium),
+    rule("Maven", &["target"], &["classes/", "maven-status/"], "Build outputs", "Run the Maven build to recreate compiled classes and packages.", Cost::Medium),
+    rule("Gradle", &["build"], &["classes/", "generated/"], "Build outputs", "Run the Gradle build to regenerate classes and outputs.", Cost::Medium),
 ];
 
 fn manifest(name: &str) -> Option<&'static str> {
@@ -98,12 +98,20 @@ pub fn manifests(
     Ok((ecosystems, latest))
 }
 
-pub fn evidence(path: &Path, rule: &Rule) -> bool {
-    rule.evidence.is_empty()
-        || rule.evidence.iter().any(|name| {
-            fs::symlink_metadata(path.join(name))
-                .is_ok_and(|m| !linked(&m) && (m.is_file() || m.is_dir()))
-        })
+/// Directory markers carry a trailing slash in the rule table.
+pub fn matched_marker(path: &Path, rule: &Rule) -> Option<&'static str> {
+    rule.evidence.iter().find_map(|&marker| {
+        let directory = marker.ends_with('/');
+        let name = marker.trim_end_matches('/');
+        let meta = fs::symlink_metadata(path.join(name)).ok()?;
+        (!linked(&meta)
+            && if directory {
+                meta.is_dir()
+            } else {
+                meta.is_file()
+            })
+        .then_some(name)
+    })
 }
 
 pub fn bytecode_source(file: &Path, project: &Path) -> bool {

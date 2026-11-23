@@ -14,6 +14,10 @@ The initial implementation offers inspection and dry-run review. It has no files
 
 Paths and metadata can change between filesystem calls. A read-only report is a snapshot with possible gaps. Reusing a scan-time absolute path for recursive deletion would introduce a time-of-check/time-of-use race.
 
+Protection has two sources. Users can protect a project and its descendants through preferences. Repository boundaries and candidate-level checks apply independently. Removing a preference requires a new scan before reviewing those candidates. A linked worktree, tracked artifact, or inaccessible candidate remains protected when its check still applies.
+
+An incomplete candidate contributes observed bytes to inventory and is excluded from the plan. Expected skips at policy boundaries can produce partial sizes without an operating-system error. An enumeration or metadata error inside a candidate also produces a scan warning. Cancellation makes the whole report ineligible for planning.
+
 ## Requirements for enabling writes
 
 An executor needs a reviewed, immutable selection bound to object identities, a fresh check of each ancestor and candidate, repository ownership and tracked-content checks, and an operation-time boundary that survives replacement and rename. Each supported platform needs dedicated adversarial temporary fixtures. Refuse the operation where the platform cannot enforce the boundary.

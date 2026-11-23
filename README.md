@@ -49,21 +49,26 @@ Recognition uses filesystem structure and metadata. A valid-looking name can sti
 
 ## Interpreting results
 
-A candidate's logical byte count describes the files observed during traversal. It can differ substantially from the storage the filesystem would release. Read the classification, detection evidence and rebuild implications before acting. A dependency installation can contain local modifications. A manifest timestamp offers limited evidence of activity.
+A candidate's logical byte count describes the files observed during traversal. It can differ substantially from the storage the filesystem would release. Read the classification, detection evidence and rebuild implications before acting. A dependency installation can contain local modifications. The date shown for a project is the newest modification time among its recognized manifests.
+
+A partial inventory counts only the file lengths the scanner observed. A protected candidate can show zero observed bytes when its contents were skipped. Protected candidates are excluded from dry-run totals. Project protection preferences can be removed in Settings. Git and filesystem boundaries still apply on the next scan.
 
 See the [filesystem safety model](docs/safety.md), [architecture](docs/architecture.md) and [roadmap](docs/roadmap.md).
 
 ## Development
 
 ```sh
-cargo test --workspace --locked
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
+cargo test --locked  # shared core and CLI
 cd apps/stackrinse-desktop
 npm ci
 npm run build
 npx playwright install chromium
 npm run test:e2e
+cd ../..
+cargo clippy --locked --workspace --all-targets -- -D warnings
+cargo test --locked --workspace
+cargo build --locked -p stackrinse-desktop --features custom-protocol
 ```
 
 Run the [synthetic discovery benchmark](benchmarks/README.md) to measure traversal on your filesystem.

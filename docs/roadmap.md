@@ -2,7 +2,9 @@
 
 ## Discovery and review
 
-Ship a shared read-only scanner, CLI and desktop workbench. Exercise plausible false positives, incomplete enumeration, changing paths, cancellation and representative large workspaces. Use native CI results to establish a platform support matrix.
+The shared scanner, CLI and desktop workbench support read-only discovery and dry-run review. CI compiles the native application and runs workspace tests on Linux, macOS and Windows.
+
+The next milestone is a packaged read-only preview. Exercise native pickers, keyboard and screen-reader navigation, high-DPI displays, large inventories and cancellation on slow volumes. Record platform, filesystem, fixture size and observed gaps for each run.
 
 ## Safe cleaning
 

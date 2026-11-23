@@ -83,7 +83,8 @@ function App() {
     scanLock = useRef(false),
     settingLock = useRef(false);
   const scanning = scanPhase === "scanning";
-  const busy = scanPhase !== "idle" || saving;
+  const [loadingSettings, setLoadingSettings] = useState(native);
+  const busy = loadingSettings || scanPhase !== "idle" || saving;
   useEffect(() => {
     if (!native) return;
     let live = true;
@@ -91,7 +92,12 @@ function App() {
       .then((s) => {
         if (live) setSettings(s);
       })
-      .catch((e) => setError(String(e)));
+      .catch((e) => {
+        if (live) setError(String(e));
+      })
+      .finally(() => {
+        if (live) setLoadingSettings(false);
+      });
     const registration = listen<{ visited: number }>("scan-progress", (e) => {
       if (live) setVisited(e.payload.visited);
     }).catch((e) => {
@@ -141,7 +147,9 @@ function App() {
     setSelected(new Set());
     setPlan(null);
     setDetail(null);
-    if (screen === "Project details") navigate("Projects");
+    setScreen((current) =>
+      current === "Project details" ? "Projects" : current,
+    );
   };
   async function update(command: string, args?: Record<string, unknown>) {
     if (scanLock.current || settingLock.current || !requireDesktop()) return;
@@ -204,7 +212,8 @@ function App() {
   async function cancel() {
     setCancelling(true);
     try {
-      await invoke("cancel_scan");
+      const accepted = await invoke<boolean>("cancel_scan");
+      if (!accepted) setCancelling(false);
     } catch (e) {
       setError(String(e));
       setCancelling(false);
@@ -364,16 +373,19 @@ function App() {
                 lastScan={lastScan}
               />
             )}
-            {screen === "Projects" && (
-              <Explorer projects={report?.projects || []} open={open} />
+            {(screen === "Projects" || screen === "Project details") && (
+              <div hidden={screen !== "Projects"}>
+                <Explorer
+                  projects={report?.projects || []}
+                  scanned={!!report}
+                  open={open}
+                />
+              </div>
             )}
             {screen === "Project details" && detail && (
               <ProjectDetails
                 p={detail}
-                protectedNow={
-                  detail.protected ||
-                  settings.protectedProjects.includes(detail.path)
-                }
+                preference={settings.protectedProjects.includes(detail.path)}
                 protect={() =>
                   void update("set_project_protection", {
                     path: detail.path,

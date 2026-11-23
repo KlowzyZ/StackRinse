@@ -132,14 +132,14 @@ export function Preferences({
           </div>
         ))}
         <p className="prefHint">
-          <b>Protected projects</b>
+          <b>Project protection preferences</b>
         </p>
         {settings.protectedProjects.length ? (
           settings.protectedProjects.map((s) => (
             <div key={s} className="prefRow">
               <code>{s}</code>
               <button disabled={busy} onClick={() => unprotect(s)}>
-                Unprotect
+                Remove preference
               </button>
             </div>
           ))

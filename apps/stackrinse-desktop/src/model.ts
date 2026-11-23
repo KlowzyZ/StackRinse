@@ -3,6 +3,7 @@ export interface Candidate {
   path: string;
   category: string;
   logical_bytes: number;
+  size_complete: boolean;
   classification: Risk;
   reason: string;
   rebuild: string;
@@ -15,6 +16,7 @@ export interface Project {
   logical_bytes: number;
   last_activity: number | null;
   protected: boolean;
+  boundary_reason: string | null;
   candidates: Candidate[];
 }
 export interface Report {
@@ -62,7 +64,7 @@ export function bytes(value: number) {
   );
 }
 export function activity(project: Project) {
-  return project.last_activity
+  return project.last_activity !== null
     ? new Date(project.last_activity * 1000).toLocaleDateString(undefined, {
         month: "short",
         day: "numeric",
