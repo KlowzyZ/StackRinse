@@ -440,3 +440,163 @@ fn linked_secondary_cmake_marker_is_insufficient_evidence() {
         .candidates()
         .is_empty());
 }
+
+#[test]
+fn godot_requires_project_and_both_editor_cache_markers() {
+    let (_temp, root) = root();
+    for project in [
+        "game",
+        "empty",
+        "unrelated",
+        "no-imports",
+        "wrong-marker-type",
+    ] {
+        if project != "unrelated" {
+            file(
+                &root,
+                &format!("{project}/project.godot"),
+                "config_version=5",
+            );
+        }
+        if project != "empty" {
+            file(&root, &format!("{project}/.godot/.gdignore"), "");
+        }
+        if ["game", "unrelated"].contains(&project) {
+            file(
+                &root,
+                &format!("{project}/.godot/imported/icon.ctex"),
+                "texture",
+            );
+        }
+    }
+    file(&root, "wrong-marker-type/.godot/imported", "a regular file");
+    file(&root, "game/icon.svg.import", "source import settings");
+    let report = inventory(&root, Default::default());
+    assert_eq!(report.projects.len(), 4);
+    assert!(report.projects.iter().all(|p| p.ecosystems == ["Godot"]));
+    let plan = dry_run(&report);
+    let [cache] = plan.candidates() else {
+        panic!("expected just the editor cache from the configured Godot project");
+    };
+    assert_eq!(cache.path, root.join("game/.godot"));
+    assert_eq!(cache.classification, Classification::ReviewRequired);
+    assert_eq!(cache.logical_bytes, 7);
+    assert!(cache.reason.contains(".gdignore and imported/"));
+
+    file(
+        &root,
+        "game/.godot/imported/vendor/.git/config",
+        "protected",
+    );
+    let protected = inventory(&root, Default::default());
+    assert!(dry_run(&protected).candidates().is_empty());
+    assert_eq!(protected.totals().protected_bytes, 7);
+}
+
+#[cfg(unix)]
+#[test]
+fn godot_linked_evidence_does_not_create_a_candidate() {
+    let (_temp, root) = root();
+    file(&root, "game/project.godot", "config_version=5");
+    file(&root, "game/.godot/.gdignore", "");
+    file(&root, "outside/icon.ctex", "not part of the project");
+    std::os::unix::fs::symlink(root.join("outside"), root.join("game/.godot/imported")).unwrap();
+    let report = inventory(&root, Default::default());
+    assert_eq!(report.projects.len(), 1);
+    assert!(report.projects[0].candidates.is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn unreadable_and_non_unicode_directories_leave_sibling_inventory_available() {
+    use std::os::unix::{ffi::OsStrExt, fs::PermissionsExt};
+
+    let (_temp, root) = root();
+    file(&root, "locked/hidden/package.json", "{}");
+    file(&root, "readable/Cargo.toml", "");
+    file(&root, "readable/target/.rustc_info.json", "{}");
+    let unusual = root.join(std::ffi::OsStr::from_bytes(b"non-unicode-\xff"));
+    file(&unusual, "go.mod", "");
+    let locked = root.join("locked");
+    let original = fs::metadata(&locked).unwrap().permissions();
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+    let denied = fs::read_dir(&locked).is_err();
+    let report = inventory(&root, Default::default());
+    fs::set_permissions(&locked, original).unwrap();
+
+    assert!(report.warnings.iter().any(|w| w.contains("non-Unicode")));
+    assert!(report.projects.iter().all(|p| p.path != unusual));
+    if denied {
+        assert!(report.warnings.iter().any(|w| w.contains("locked")));
+        assert_eq!(report.projects.len(), 1);
+    }
+    assert_eq!(dry_run(&report).logical_bytes(), 2);
+}
+
+#[test]
+fn cancellation_from_final_progress_disables_review() {
+    use std::sync::atomic::Ordering;
+
+    let (_temp, root) = root();
+    file(&root, "Cargo.toml", "");
+    file(&root, "target/.rustc_info.json", "metadata");
+    let cancel = AtomicBool::new(false);
+    let report = scan(
+        std::slice::from_ref(&root),
+        &Default::default(),
+        &cancel,
+        |p| {
+            if p.projects > 0 {
+                cancel.store(true, Ordering::Relaxed);
+            }
+        },
+    )
+    .unwrap();
+    assert!(report.cancelled);
+    assert_eq!(report.totals().logical_bytes, 8);
+    assert_eq!(report.totals().reviewable_bytes, 0);
+    assert!(dry_run(&report).candidates().is_empty());
+}
+
+#[test]
+fn root_removed_during_scan_preserves_other_roots() {
+    let (_temp, root) = root();
+    let first = root.join("a");
+    let missing = root.join("b");
+    let last = root.join("c");
+    file(&first, "go.mod", "");
+    fs::create_dir(&missing).unwrap();
+    file(&last, "Cargo.toml", "");
+    file(&last, "target/.rustc_info.json", "{}");
+
+    let report = scan(
+        &[first, missing.clone(), last],
+        &Default::default(),
+        &AtomicBool::new(false),
+        |p| {
+            if p.directories == 1 {
+                fs::remove_dir(&missing).unwrap();
+            }
+        },
+    )
+    .unwrap();
+    assert_eq!(report.projects.len(), 2);
+    assert_eq!(report.warnings.len(), 1);
+    assert!(report.warnings[0].contains(&*missing.to_string_lossy()));
+    assert_eq!(dry_run(&report).logical_bytes(), 2);
+}
+
+#[cfg(windows)]
+#[test]
+fn differently_cased_artifact_keeps_actual_path_without_nested_accounting() {
+    let (_temp, root) = root();
+    file(&root, "Cargo.toml", "");
+    file(&root, "TARGET/.rustc_info.json", "{}");
+    file(&root, "TARGET/dependency/Cargo.toml", "manifest");
+    file(&root, "TARGET/dependency/target/.rustc_info.json", "{}");
+
+    let report = inventory(&root, Default::default());
+    assert_eq!(report.projects.len(), 1);
+    assert_eq!(report.projects[0].candidates[0].path, root.join("TARGET"));
+    assert_eq!(report.totals().logical_bytes, 12);
+}

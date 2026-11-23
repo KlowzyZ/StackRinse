@@ -1,7 +1,6 @@
 use crate::{policy, rules, Candidate, Classification, Progress, Project, Report, ScanOptions};
 use rayon::prelude::*;
 use std::{
-    collections::HashSet,
     fs, io,
     path::{Component, Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
@@ -73,23 +72,26 @@ fn other_volume(_: &fs::Metadata, _: &fs::Metadata) -> bool {
 }
 
 fn measure(
-    project: &Path,
-    name: &str,
+    path: &Path,
     rule: &rules::Rule,
     options: &ScanOptions,
     cancel: &AtomicBool,
     protection: Option<&str>,
 ) -> (Candidate, Option<String>) {
-    let path = project.join(name);
+    let project = path.parent().expect("candidate has an owning directory");
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("only Unicode candidates are measured");
     let mut blocked = protection.map(str::to_owned);
     let mut bytes = 0u64;
     let mut read_error = None;
     let mut size_complete = true;
     let mut files = 0u64;
-    let bytecode = name == "__pycache__";
+    let bytecode = rule.names == ["__pycache__"];
     let mut all_bytecode = true;
     let base_meta = fs::symlink_metadata(project);
-    let mut walk = WalkDir::new(&path)
+    let mut walk = WalkDir::new(path)
         .follow_root_links(false)
         .max_open(12)
         .into_iter();
@@ -158,6 +160,10 @@ fn measure(
     if blocked.is_none() && !stopped(cancel) {
         blocked = policy::tracked(project, name, cancel).map(str::to_owned);
     }
+    if stopped(cancel) {
+        size_complete = false;
+        blocked.get_or_insert_with(|| "Measurement interrupted.".into());
+    }
     if bytecode && (!all_bytecode || files == 0) {
         blocked.get_or_insert_with(|| "Bytecode could not be matched to adjacent source modules, or unexpected contents were found.".into());
     }
@@ -168,7 +174,7 @@ fn measure(
             "Only interpreter-named bytecode with corresponding source modules was observed."
                 .into(),
         ),
-        None => match rules::matched_marker(&path, rule) {
+        None => match rules::matched_marker(path, rule) {
             Ok(Some(marker)) => (
                 Classification::ReviewRequired,
                 format!(
@@ -189,7 +195,7 @@ fn measure(
     };
     (
         Candidate {
-            path,
+            path: path.into(),
             category: rule.category.into(),
             logical_bytes: bytes,
             size_complete,
@@ -261,51 +267,53 @@ pub fn scan(
     let mut report = Report::default();
     let mut last = None::<Instant>;
     for root in unique {
-        let volume = fs::symlink_metadata(&root).map_err(|e| ScanError::InvalidRoot {
-            path: root.clone(),
-            reason: e.to_string(),
-        })?;
-        let mut skip = HashSet::new();
-        let mut owners: Vec<usize> = Vec::new();
-        let mut walk = WalkDir::new(root)
-            .follow_root_links(false)
-            .max_open(16)
-            .into_iter();
-        while !stopped(cancel) {
-            let Some(entry) = walk.next() else {
-                break;
-            };
-            let entry = match entry {
-                Ok(e) => e,
-                Err(e) => {
-                    warning(&mut report.warnings, e.to_string());
-                    continue;
-                }
-            };
-            if !entry.file_type().is_dir() {
+        if stopped(cancel) {
+            break;
+        }
+        let volume = match fs::symlink_metadata(&root) {
+            Ok(meta) if meta.is_dir() && !policy::linked(&meta) => meta,
+            Ok(_) => {
+                warning(
+                    &mut report.warnings,
+                    format!("{}: scan root changed", root.display()),
+                );
                 continue;
             }
-            let path = entry.path();
-            if skip.remove(path)
-                || policy::has_git_marker(path)
+            Err(error) => {
+                warning(&mut report.warnings, format!("{}: {error}", root.display()));
+                continue;
+            }
+        };
+        let mut owners: Vec<usize> = Vec::new();
+        let mut pending = vec![root];
+        while !stopped(cancel) {
+            let Some(path) = pending.pop() else {
+                break;
+            };
+            let path = path.as_path();
+            if policy::has_git_marker(path)
                 || policy::system_path(path)
                 || policy::excluded(path, &options)
             {
-                walk.skip_current_dir();
+                continue;
+            }
+            if path.to_str().is_none() {
+                warning(
+                    &mut report.warnings,
+                    format!(
+                        "{}: skipped directory with a non-Unicode path",
+                        path.display()
+                    ),
+                );
                 continue;
             }
             match fs::symlink_metadata(path) {
                 Ok(meta)
-                    if !policy::linked(&meta)
-                        && !other_volume(&volume, &meta)
-                        && path.to_str().is_some() => {}
-                Ok(_) => {
-                    walk.skip_current_dir();
-                    continue;
+                    if meta.is_dir() && !policy::linked(&meta) && !other_volume(&volume, &meta) => {
                 }
+                Ok(_) => continue,
                 Err(e) => {
                     warning(&mut report.warnings, format!("{}: {e}", path.display()));
-                    walk.skip_current_dir();
                     continue;
                 }
             }
@@ -316,6 +324,9 @@ pub fn scan(
                     projects: report.projects.len() as u64,
                 });
                 last = Some(Instant::now());
+                if stopped(cancel) {
+                    break;
+                }
             }
             while owners
                 .last()
@@ -332,14 +343,8 @@ pub fn scan(
                         let protection = owner
                             .protected
                             .then_some("The owning project is protected.");
-                        let (candidate, read_error) = measure(
-                            parent,
-                            "__pycache__",
-                            &rules::PYTHON_BYTECODE,
-                            &options,
-                            cancel,
-                            protection,
-                        );
+                        let (candidate, read_error) =
+                            measure(path, &rules::PYTHON_BYTECODE, &options, cancel, protection);
                         if !stopped(cancel) {
                             if let Some(message) = read_error {
                                 warning(&mut report.warnings, message);
@@ -348,19 +353,40 @@ pub fn scan(
                                 owner.logical_bytes.saturating_add(candidate.logical_bytes);
                             owner.candidates.push(candidate);
                         }
-                        walk.skip_current_dir();
                         continue;
                     }
                 }
             }
-            let (ecosystems, last_activity) = match rules::manifests(path, cancel) {
-                Ok(data) => data,
+            let mut entries = match fs::read_dir(path) {
+                Ok(entries) => entries,
                 Err(e) => {
                     warning(&mut report.warnings, format!("{}: {e}", path.display()));
-                    walk.skip_current_dir();
                     continue;
                 }
             };
+            let first_child = pending.len();
+            let mut evidence = rules::ProjectEvidence::default();
+            while !stopped(cancel) {
+                let Some(entry) = entries.next() else {
+                    break;
+                };
+                let result = entry.and_then(|entry| {
+                    if entry.file_type()?.is_dir() {
+                        pending.push(entry.path());
+                    } else {
+                        evidence.record(&entry)?;
+                    }
+                    Ok(())
+                });
+                if let Err(e) = result {
+                    warning(&mut report.warnings, format!("{}: {e}", path.display()));
+                }
+            }
+            if stopped(cancel) {
+                break;
+            }
+            pending[first_child..].reverse();
+            let (ecosystems, last_activity) = evidence.finish();
             if ecosystems.is_empty() {
                 continue;
             }
@@ -371,45 +397,62 @@ pub fn scan(
                 .any(|p| path.starts_with(p));
             let protection = boundary
                 .or(preference.then_some("This project is protected by a user preference."));
-            let mut jobs = Vec::new();
-            for rule in rules::RULES
+            let applicable: Vec<_> = rules::RULES
                 .iter()
-                .filter(|r| ecosystems.iter().any(|e| e == r.ecosystem))
-            {
-                for &name in rule.names {
-                    let artifact = path.join(name);
-                    if policy::excluded(&artifact, &options) {
-                        continue;
+                .filter(|rule| ecosystems.iter().any(|e| e == rule.ecosystem))
+                .collect();
+            let mut jobs = Vec::new();
+            // Select from the observed children, so a candidate is removed from
+            // discovery by its actual spelling and is measured only once.
+            pending
+                .extract_if(first_child.., |artifact| {
+                    if stopped(cancel) {
+                        return false;
                     }
-                    match fs::symlink_metadata(&artifact) {
-                        Ok(m)
-                            if m.is_dir() && !policy::linked(&m) && !other_volume(&volume, &m) =>
-                        {
-                            if jobs.iter().any(|(n, _)| *n == name) {
-                                continue;
-                            }
-                            let matched = match rules::matched_marker(&artifact, rule) {
-                                Ok(marker) => rule.evidence.is_empty() || marker.is_some(),
-                                Err(error) => {
-                                    warning(&mut report.warnings, error.to_string());
-                                    false
-                                }
-                            };
-                            if matched {
-                                skip.insert(artifact);
-                                jobs.push((name, rule));
-                            }
-                        }
-                        Err(e) if e.kind() != io::ErrorKind::NotFound => {
-                            warning(&mut report.warnings, format!("{}: {e}", artifact.display()))
-                        }
-                        _ => {}
+                    let Some(name) = artifact.file_name().and_then(|n| n.to_str()) else {
+                        return false;
+                    };
+                    let mut matching = applicable
+                        .iter()
+                        .copied()
+                        .filter(|rule| rule.matches_directory(name))
+                        .peekable();
+                    if matching.peek().is_none() || policy::excluded(artifact, &options) {
+                        return false;
                     }
-                }
+                    match fs::symlink_metadata(&*artifact) {
+                        Ok(meta)
+                            if meta.is_dir()
+                                && !policy::linked(&meta)
+                                && !other_volume(&volume, &meta) => {}
+                        Ok(_) => return false,
+                        Err(error) => {
+                            warning(
+                                &mut report.warnings,
+                                format!("{}: {error}", artifact.display()),
+                            );
+                            return false;
+                        }
+                    }
+                    for rule in matching {
+                        match rules::matched_marker(artifact, rule) {
+                            Ok(marker) if rule.evidence.is_empty() || marker.is_some() => {
+                                jobs.push((artifact.clone(), rule));
+                                return true;
+                            }
+                            Ok(_) => {}
+                            Err(error) => warning(&mut report.warnings, error.to_string()),
+                        }
+                    }
+                    false
+                })
+                .for_each(drop);
+            if stopped(cancel) {
+                break;
             }
             let measurements: Vec<_> = pool.install(|| {
                 jobs.par_iter()
-                    .map(|(n, r)| measure(path, n, r, &options, cancel, protection))
+                    .map(|(artifact, rule)| measure(artifact, rule, &options, cancel, protection))
                     .collect()
             });
             if stopped(cancel) {
@@ -451,10 +494,10 @@ pub fn scan(
         project.candidates.sort_by(|a, b| a.path.cmp(&b.path));
     }
     report.projects.sort_by(|a, b| a.path.cmp(&b.path));
-    report.cancelled = stopped(cancel);
     progress(Progress {
         directories: report.directories,
         projects: report.projects.len() as u64,
     });
+    report.cancelled = stopped(cancel);
     Ok(report)
 }

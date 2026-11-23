@@ -9,6 +9,14 @@ pub struct Rule {
     pub rebuild: &'static str,
     pub cost: Cost,
 }
+impl Rule {
+    pub fn matches_directory(&self, name: &str) -> bool {
+        self.names.iter().any(|expected| {
+            name == *expected || (cfg!(windows) && name.eq_ignore_ascii_case(expected))
+        })
+    }
+}
+
 const fn rule(
     ecosystem: &'static str,
     names: &'static [&'static str],
@@ -36,6 +44,7 @@ pub const PYTHON_BYTECODE: Rule = rule(
 );
 
 pub const RULES: &[Rule] = &[
+    rule("Godot", &[".godot"], &[".gdignore"], "Editor caches", "Open the project in Godot to regenerate imports and cache data. Review editor-local state before rebuilding.", Cost::Medium),
     rule("Go", &["vendor"], &["modules.txt"], "Dependencies", "Regenerate vendored dependencies with the project’s Go toolchain and module sources. Keep local vendor patches before rebuilding.", Cost::High),
     rule("CMake", &["build", "cmake-build-debug", "cmake-build-release"], &["CMakeCache.txt"], "Build outputs", "Reconfigure with the original CMake generator, toolchain and options, then rebuild. Local cache settings and custom outputs may be unique.", Cost::High),
     rule("Node.js", &["node_modules"], &[".package-lock.json", ".modules.yaml", ".yarn-state.yml"], "Dependencies", "Reinstall dependencies with the project’s package manager. Local package edits may be lost.", Cost::High),
@@ -56,6 +65,7 @@ fn manifest(name: &str) -> Option<&'static str> {
         "package.json" => Some("Node.js"),
         "pyproject.toml" | "setup.py" | "setup.cfg" | "requirements.txt" => Some("Python"),
         "go.mod" => Some("Go"),
+        "project.godot" => Some("Godot"),
         "CMakeLists.txt" => Some("CMake"),
         "Cargo.toml" => Some("Rust"),
         "pom.xml" => Some("Maven"),
@@ -70,36 +80,39 @@ fn manifest(name: &str) -> Option<&'static str> {
     }
 }
 
-pub fn manifests(
-    path: &Path,
-    cancel: &std::sync::atomic::AtomicBool,
-) -> io::Result<(Vec<String>, Option<u64>)> {
-    let mut ecosystems = Vec::new();
-    let mut latest = None;
-    for item in fs::read_dir(path)? {
-        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
-            break;
-        }
-        let item = item?;
-        let name = item.file_name();
-        if let Some(eco) = name.to_str().and_then(manifest) {
-            let meta = fs::symlink_metadata(item.path())?;
-            if linked(&meta) || !meta.is_file() {
-                continue;
+#[derive(Default)]
+pub struct ProjectEvidence {
+    ecosystems: Vec<String>,
+    latest: Option<u64>,
+}
+
+impl ProjectEvidence {
+    pub fn record(&mut self, entry: &fs::DirEntry) -> io::Result<()> {
+        let name = entry.file_name();
+        let Some(eco) = name.to_str().and_then(manifest) else {
+            return Ok(());
+        };
+        let meta = entry.metadata().map_err(|error| {
+            io::Error::new(error.kind(), format!("{}: {error}", entry.path().display()))
+        })?;
+        if !linked(&meta) && meta.is_file() {
+            if !self.ecosystems.iter().any(|s| s == eco) {
+                self.ecosystems.push(eco.to_owned());
             }
-            if !ecosystems.iter().any(|s| s == eco) {
-                ecosystems.push(eco.to_owned());
-            }
-            latest = latest.max(
+            self.latest = self.latest.max(
                 meta.modified()
                     .ok()
                     .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
                     .map(|d| d.as_secs()),
             );
         }
+        Ok(())
     }
-    ecosystems.sort();
-    Ok((ecosystems, latest))
+
+    pub fn finish(mut self) -> (Vec<String>, Option<u64>) {
+        self.ecosystems.sort();
+        (self.ecosystems, self.latest)
+    }
 }
 
 fn metadata_if_present(path: &Path) -> io::Result<Option<fs::Metadata>> {
@@ -135,13 +148,14 @@ pub fn matched_marker(path: &Path, rule: &Rule) -> io::Result<Option<&'static st
         {
             return Ok(None);
         }
-        if rule.ecosystem == "CMake" {
-            let index = metadata_if_present(&path.join("CMakeFiles"))?;
-            return Ok(index
-                .filter(|m| !linked(m) && m.is_dir())
-                .map(|_| "CMakeCache.txt and CMakeFiles/"));
-        }
-        return Ok(Some(name));
+        let (directory, evidence) = match rule.ecosystem {
+            "CMake" => ("CMakeFiles", "CMakeCache.txt and CMakeFiles/"),
+            "Godot" => ("imported", ".gdignore and imported/"),
+            _ => return Ok(Some(name)),
+        };
+        return Ok(metadata_if_present(&path.join(directory))?
+            .filter(|m| !linked(m) && m.is_dir())
+            .map(|_| evidence));
     }
     Ok(None)
 }
