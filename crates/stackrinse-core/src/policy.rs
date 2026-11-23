@@ -1,7 +1,7 @@
 use crate::ScanOptions;
 use std::{
     fs::{self, Metadata},
-    path::{Component, Path},
+    path::Path,
     process::{Child, Command, ExitStatus, Stdio},
     sync::atomic::{AtomicBool, Ordering},
     time::{Duration, Instant},
@@ -49,7 +49,7 @@ pub fn system_path(path: &Path) -> bool {
     {
         // Canonical paths can use a verbatim drive prefix. Compare components.
         let first = path.components().find_map(|c| match c {
-            Component::Normal(v) => Some(v.to_string_lossy().to_ascii_lowercase()),
+            std::path::Component::Normal(v) => Some(v.to_string_lossy().to_ascii_lowercase()),
             _ => None,
         });
         matches!(
@@ -66,6 +66,33 @@ pub fn system_path(path: &Path) -> bool {
     }
 }
 
+#[cfg(windows)]
+fn same_basename(name: &std::ffi::OsStr, excluded: &std::ffi::OsStr) -> bool {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Globalization::{CompareStringOrdinal, CSTR_EQUAL};
+
+    if name.as_encoded_bytes().is_ascii() && excluded.as_encoded_bytes().is_ascii() {
+        return name.eq_ignore_ascii_case(excluded);
+    }
+    let name: Vec<_> = name.encode_wide().collect();
+    let excluded: Vec<_> = excluded.encode_wide().collect();
+    // SAFETY: both slices remain live and the explicit lengths count UTF-16 units.
+    unsafe {
+        CompareStringOrdinal(
+            name.as_ptr(),
+            name.len() as i32,
+            excluded.as_ptr(),
+            excluded.len() as i32,
+            1,
+        ) == CSTR_EQUAL
+    }
+}
+
+#[cfg(not(windows))]
+fn same_basename(name: &std::ffi::OsStr, excluded: &std::ffi::OsStr) -> bool {
+    name == excluded
+}
+
 pub fn excluded(path: &Path, opts: &ScanOptions) -> bool {
     opts.exclusions.iter().any(|e| {
         if e.is_absolute() {
@@ -74,13 +101,8 @@ pub fn excluded(path: &Path, opts: &ScanOptions) -> bool {
             // Traversal checks every visited directory. Keep case folding on
             // the current entry so an outside ancestor (such as AppData/Local)
             // cannot silently exclude the selected workspace.
-            (cfg!(windows)
-                && path
-                    .file_name()
-                    .is_some_and(|name| name.eq_ignore_ascii_case(e.as_os_str())))
-                || path
-                    .components()
-                    .any(|c| matches!(c, Component::Normal(name) if name == e.as_os_str()))
+            path.file_name()
+                .is_some_and(|name| same_basename(name, e.as_os_str()))
         }
     })
 }
@@ -124,20 +146,18 @@ fn wait_for_index(mut child: Child, cancel: &AtomicBool, timeout: Duration) -> O
 }
 
 pub fn tracked(project: &Path, relative: &str, cancel: &AtomicBool) -> Option<&'static str> {
-    let mut repository = false;
+    let mut repository = None;
     for dir in project.ancestors() {
         match fs::symlink_metadata(dir.join(".git")) {
             Ok(_) => {
-                repository = true;
+                repository = Some(dir);
                 break;
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(_) => return Some("Repository boundary could not be inspected."),
         }
     }
-    if !repository {
-        return None;
-    }
+    let repository = repository?;
     // ls-files reads the index. Disable hooks, external fsmonitor and optional
     // index updates; never invoke project commands or filters. Git must be on PATH.
     let path = std::env::var_os("PATH").unwrap_or_default();
@@ -151,13 +171,27 @@ pub fn tracked(project: &Path, relative: &str, cancel: &AtomicBool) -> Option<&'
     let mut git = Command::new(executable);
     // Ignore ambient repository/index overrides and injected command config.
     for (key, _) in std::env::vars_os() {
-        if key.to_string_lossy().starts_with("GIT_") {
+        if key.to_string_lossy().get(..4).is_some_and(|prefix| {
+            prefix == "GIT_" || (cfg!(windows) && prefix.eq_ignore_ascii_case("GIT_"))
+        }) {
             git.env_remove(key);
         }
     }
+    let artifact = project
+        .strip_prefix(repository)
+        .expect("repository is an ancestor")
+        .join(relative);
+    let mut pathspec = std::ffi::OsString::from(if cfg!(any(windows, target_os = "macos")) {
+        ":(icase,literal)"
+    } else {
+        ":(literal)"
+    });
+    #[cfg(windows)]
+    let artifact = artifact.to_string_lossy().replace('\\', "/");
+    pathspec.push(artifact);
     let child = git
         .arg("-C")
-        .arg(project)
+        .arg(repository)
         .env("GIT_OPTIONAL_LOCKS", "0")
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env(
@@ -165,15 +199,14 @@ pub fn tracked(project: &Path, relative: &str, cancel: &AtomicBool) -> Option<&'
             if cfg!(windows) { "NUL" } else { "/dev/null" },
         )
         .args([
-            "--literal-pathspecs",
             "-c",
             "core.fsmonitor=false",
             "ls-files",
             "--cached",
             "--error-unmatch",
             "--",
-            relative,
         ])
+        .arg(pathspec)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())

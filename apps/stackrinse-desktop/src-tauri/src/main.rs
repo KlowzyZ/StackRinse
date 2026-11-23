@@ -123,19 +123,21 @@ struct ScanProgress {
 
 #[tauri::command]
 async fn scan(app: AppHandle, session: State<'_, Session>) -> Result<Arc<Report>> {
-    let settings = get_settings(app.clone())?;
-    if settings.roots.is_empty() {
-        return Err("Choose a scan folder first.".into());
-    }
     let cancelled = Arc::new(AtomicBool::new(false));
     {
         let mut slot = lock(&session.scan)?;
         if slot.is_some() {
             return Err("A scan is already running.".into());
         }
+        // A replacement scan invalidates the previous preview, including on failure.
+        *lock(&session.last_scan)? = None;
         *slot = Some(cancelled.clone());
     }
     let lease = ScanLease(session.scan.clone());
+    let settings = get_settings(app.clone())?;
+    if settings.roots.is_empty() {
+        return Err("Choose a scan folder first.".into());
+    }
     let scan_settings = settings.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         let options = ScanOptions {

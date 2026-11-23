@@ -334,7 +334,11 @@ pub fn scan(
             {
                 owners.pop();
             }
-            if path.file_name().is_some_and(|name| name == "__pycache__") {
+            if path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|name| rules::PYTHON_BYTECODE.matches_directory(name))
+            {
                 if let Some(owner) = owners.last().map(|&i| &mut report.projects[i]) {
                     let parent = path.parent().expect("a named directory has a parent");
                     let crosses_repository = parent.ancestors().take_while(|p| *p != owner.path)

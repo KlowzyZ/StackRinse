@@ -23,7 +23,7 @@ export function Preferences({
   choose: () => void;
   remove: (s: string) => void;
   unprotect: (s: string) => void;
-  save: (appearance: Settings["appearance"], names: string[]) => void;
+  save: (appearance: Settings["appearance"], names: string[]) => Promise<boolean>;
   busy: boolean;
 }) {
   const [draft, setDraft] = useState("");
@@ -95,17 +95,19 @@ export function Preferences({
         </p>
         <form
           className="exclude"
-          onSubmit={(e) => {
+          onSubmit={async (e) => {
             e.preventDefault();
             const name = draft.trim();
             if (name && !settings.excludedNames.includes(name)) {
-              save(settings.appearance, [...settings.excludedNames, name]);
-              setDraft("");
+              if (await save(settings.appearance, [...settings.excludedNames, name])) {
+                setDraft("");
+              }
             }
           }}
         >
           <input
             aria-label="Directory name to exclude"
+            disabled={busy}
             placeholder="Directory name"
             required
             pattern={"[^/\\\\]+"}

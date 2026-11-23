@@ -92,6 +92,7 @@ impl ProjectEvidence {
         let Some(eco) = name.to_str().and_then(manifest) else {
             return Ok(());
         };
+        // DirEntry::metadata inspects the entry without following a symbolic link.
         let meta = entry.metadata().map_err(|error| {
             io::Error::new(error.kind(), format!("{}: {error}", entry.path().display()))
         })?;

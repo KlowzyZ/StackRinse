@@ -396,3 +396,14 @@ test("page and filter artifact paths, then revise the dry-run selection", async 
     several.dispose();
   }
 });
+
+test("a failed exclusion save preserves the draft for retry", async ({ page }) => {
+  await connectDesktop(page, fixture, { rejectPreferences: true });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  const draft = page.getByRole("textbox", { name: "Directory name to exclude" });
+  await draft.fill("generated");
+  await page.getByRole("button", { name: "Add exclusion" }).click();
+  await expect(page.getByRole("alert")).toContainText("Settings are busy");
+  await expect(draft).toHaveValue("generated");
+});
