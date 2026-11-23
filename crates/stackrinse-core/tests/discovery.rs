@@ -625,3 +625,87 @@ fn differently_cased_artifact_keeps_actual_path_without_nested_accounting() {
     assert!(excluded.projects[0].candidates.is_empty());
     assert_eq!(excluded.totals().logical_bytes, 0);
 }
+
+#[test]
+fn basename_exclusions_start_at_the_selected_root() {
+    let (_tmp, root) = root();
+    let workspace = root.join("local/workspace");
+    file(&workspace, "Cargo.toml", "");
+    file(&workspace, "local/nested/Cargo.toml", "");
+    let report = inventory(
+        &workspace,
+        ScanOptions {
+            exclusions: vec!["local".into()],
+            ..Default::default()
+        },
+    );
+    assert_eq!(report.projects.len(), 1);
+    assert_eq!(report.projects[0].path, workspace);
+}
+
+#[test]
+fn manifest_context_requires_a_regular_entry() {
+    #[cfg(unix)]
+    use std::os::unix::fs::symlink as link;
+    #[cfg(windows)]
+    use std::os::windows::fs::symlink_file as link;
+    let (_tmp, dir) = root();
+    file(&dir, "real/package.json", "{}");
+    for name in ["linked", "dangling", "directory"] {
+        file(
+            &dir,
+            &format!("{name}/node_modules/.package-lock.json"),
+            "{}",
+        );
+    }
+    link(
+        dir.join("real/package.json"),
+        dir.join("linked/package.json"),
+    )
+    .unwrap();
+    link(dir.join("missing"), dir.join("dangling/package.json")).unwrap();
+    fs::create_dir(dir.join("directory/package.json")).unwrap();
+    #[cfg(windows)]
+    assert!(Command::new("cmd.exe")
+        .current_dir(dir.join("directory"))
+        .args(["/d", "/c", "mklink", "/J", "Cargo.toml", r"..\real"])
+        .status()
+        .unwrap()
+        .success());
+    let report = inventory(&dir, Default::default());
+    assert!(report.warnings.is_empty());
+    assert_eq!(report.projects.len(), 1);
+    assert_eq!(report.projects[0].path, dir.join("real"));
+}
+
+#[cfg(any(windows, target_os = "macos"))]
+#[test]
+fn case_only_project_rename_preserves_index_protection() {
+    let (_tmp, dir) = root();
+    file(&dir, "project/Cargo.toml", "");
+    file(&dir, "project/target/.rustc_info.json", "{}");
+    for args in [vec!["init", "-q"], vec!["add", "-f", "project"]] {
+        assert!(Command::new("git")
+            .current_dir(&dir)
+            .args(args)
+            .status()
+            .unwrap()
+            .success());
+    }
+    fs::rename(dir.join("project"), dir.join("staging")).unwrap();
+    fs::rename(dir.join("staging"), dir.join("PROJECT")).unwrap();
+    let report = inventory(&dir, Default::default());
+    assert!(report.projects[0].candidates[0].reason.contains("tracked"));
+    assert!(dry_run(&report).candidates().is_empty());
+}
+
+#[cfg(windows)]
+#[test]
+fn mixed_case_nested_bytecode_keeps_its_project_owner() {
+    let (_tmp, dir) = root();
+    file(&dir, "pyproject.toml", "");
+    file(&dir, "pkg/unit.py", "pass");
+    file(&dir, "pkg/__PYCACHE__/unit.cpython-312.pyc", "abc");
+    let report = inventory(&dir, Default::default());
+    assert_eq!(dry_run(&report).logical_bytes(), 3);
+}

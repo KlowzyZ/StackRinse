@@ -8,6 +8,7 @@ export async function connectDesktop(
   fixture: ReturnType<typeof scanFixture>,
   options: {
     waitForCancel?: boolean;
+    rejectPreferences?: boolean;
     cancelReady?: () => boolean;
     pickFolder?: () => Promise<boolean>;
   } = {},
@@ -35,6 +36,7 @@ export async function connectDesktop(
           settings.roots = settings.roots.filter((root) => root !== args.root);
           break;
         case "set_preferences":
+          if (options.rejectPreferences) throw Error("Settings are busy. Try again.");
           settings = {
             ...settings,
             appearance: String(args.appearance),

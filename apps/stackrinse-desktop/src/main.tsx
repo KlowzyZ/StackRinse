@@ -155,7 +155,7 @@ function App() {
     );
   };
   async function update(command: string, args?: Record<string, unknown>) {
-    if (scanLock.current || settingLock.current || !requireDesktop()) return;
+    if (scanLock.current || settingLock.current || !requireDesktop()) return false;
     settingLock.current = true;
     setSaving(true);
     setError("");
@@ -170,8 +170,10 @@ function App() {
           next[key].some((value, index) => value !== settings[key][index]),
       );
       if (scopeChanged) clearInventory();
+      return true;
     } catch (e) {
       setError(String(e));
+      return false;
     } finally {
       settingLock.current = false;
       setSaving(false);
@@ -562,7 +564,7 @@ function App() {
                   })
                 }
                 save={(appearance, excludedNames) =>
-                  void update("set_preferences", { appearance, excludedNames })
+                  update("set_preferences", { appearance, excludedNames })
                 }
               />
             )}
