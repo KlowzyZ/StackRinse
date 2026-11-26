@@ -30,3 +30,5 @@ Record intent before a mutation, then record each item's outcome. A failure or i
 
 
 A future recoverable operation needs a distinct authorization model. On Windows, bind every selected object to its volume and file identity and recheck reparse points, ancestor identities and Git protection through operation-time handles. Treat a changed identity, incomplete inspection, newly applied protection or unavailable recovery mechanism as a refusal for that item. Exercise those outcomes on disposable volumes before introducing any operation API. Today's serialized preview contains paths and observations only.
+
+The [recoverable operation experiment](recoverable-operations.md) specifies the disposable-fixture boundary and open qualification questions.

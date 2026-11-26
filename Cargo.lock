@@ -3415,11 +3415,14 @@ dependencies = [
 name = "stackrinse-core"
 version = "0.1.0"
 dependencies = [
+ "fs2",
  "libc",
  "rayon",
+ "rusqlite",
  "serde",
  "tempfile",
  "thiserror 2.0.21",
+ "uuid",
  "walkdir",
  "windows-sys 0.61.2",
 ]

@@ -121,3 +121,40 @@ fn relative_protection_and_exclusion_resolve_from_current_directory() {
     let report: Value = serde_json::from_slice(&excluded.stdout).unwrap();
     assert_eq!(report["projects"], serde_json::json!([]));
 }
+
+#[test]
+fn recovery_is_unavailable_at_production_entry_points() {
+    let root = fixture();
+    for verb in ["quarantine", "restore", "purge"] {
+        assert_eq!(run(verb, root.path(), &[]).status.code(), Some(2));
+    }
+    let host = include_str!("../../../apps/stackrinse-desktop/src-tauri/src/main.rs");
+    let (_, registration) = host.split_once("tauri::generate_handler![").unwrap();
+    let names: Vec<_> = registration
+        .split_once(']')
+        .unwrap()
+        .0
+        .split(',')
+        .map(str::trim)
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "get_settings",
+            "choose_root",
+            "remove_root",
+            "set_preferences",
+            "set_project_protection",
+            "scan",
+            "cancel_scan",
+            "dry_run",
+            "history_list",
+            "history_detail",
+            "history_compare",
+            "history_remove",
+            "history_clear",
+            "history_set_retention",
+            "export_inventory"
+        ]
+    );
+}
