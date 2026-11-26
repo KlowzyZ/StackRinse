@@ -135,7 +135,8 @@ test("filter projects, inspect evidence and review an explicit selection", async
   await expect.poll(() => calls.includes("dry_run")).toBe(true);
   await expect(
     page.getByRole("button", { name: "Clean selected" }),
-  ).toBeDisabled();
+  ).toHaveCount(0);
+  await expect(page.getByText("Cleanup unavailable", { exact: true })).toBeVisible();
   await expect(page.getByText("__pycache__", { exact: true })).toBeVisible();
   if (process.env.STACKRINSE_SCREENSHOTS) {
     mkdirSync(process.env.STACKRINSE_SCREENSHOTS, { recursive: true });
@@ -384,7 +385,8 @@ test("page and filter artifact paths, then revise the dry-run selection", async 
     expect(calls.filter((c) => c === "dry_run")).toHaveLength(2);
     await expect(
       page.getByRole("button", { name: "Clean selected" }),
-    ).toBeDisabled();
+    ).toHaveCount(0);
+    await expect(page.getByText("Cleanup unavailable", { exact: true })).toBeVisible();
     await page
       .getByRole("button", { name: /Remove from review: .*package-41/ })
       .click();
@@ -406,4 +408,36 @@ test("a failed exclusion save preserves the draft for retry", async ({ page }) =
   await page.getByRole("button", { name: "Add exclusion" }).click();
   await expect(page.getByRole("alert")).toContainText("Settings are busy");
   await expect(draft).toHaveValue("generated");
+});
+
+test("first launch has one scan action and keyboard detail return restores project context", async ({
+  page,
+}) => {
+  await connectDesktop(page, fixture);
+  await page.setViewportSize({ width: 640, height: 480 });
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Storage overview" })).toBeVisible();
+  await page.keyboard.press("Tab");
+  await expect(page.getByRole("link", { name: "Skip to content" })).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("heading", { name: "Storage overview" })).toBeFocused();
+  const scan = page.getByRole("button", { name: "Scan folders", exact: true });
+  await expect(scan).toHaveCount(1);
+  await expect(page.getByText("Scans run locally", { exact: false })).toBeVisible();
+  await expect(page.getByRole("img", { name: "Storage map awaiting scan" })).toHaveCount(0);
+  await scan.click();
+  await expect(page.getByText("Inventory measured")).toBeVisible();
+  await page.getByRole("navigation", { name: "Workspace" })
+    .getByRole("button", { name: "Projects", exact: true }).click();
+  await page.getByRole("textbox", { name: "Search projects" }).fill("signal");
+  const project = page.getByRole("button", { name: /^signal-notebook/ });
+  await project.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("heading", { name: "signal-notebook" })).toBeFocused();
+  await page.locator("main").getByRole("button", { name: "Projects", exact: true }).click();
+  await expect(project).toBeFocused();
+  await expect(page.getByRole("textbox", { name: "Search projects" })).toHaveValue("signal");
+  expect(await page.locator("main").evaluate((el) => el.scrollWidth)).toBeLessThanOrEqual(
+    await page.locator("main").evaluate((el) => el.clientWidth),
+  );
 });

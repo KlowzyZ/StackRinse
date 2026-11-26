@@ -2,9 +2,15 @@
 
 **Clean builds. Keep code.**
 
-StackRinse is an offline developer storage manager by KLOWZY. Point it at a workspace to inspect generated artifacts, compare their logical sizes, and see what each project would need to rebuild. The Rust CLI and desktop application share a read-only discovery engine. This development version previews cleanup.
+StackRinse is an open-source developer storage workbench by KLOWZY. Choose a workspace to see how much of its logical storage goes to dependencies, build outputs, and caches. Find the largest projects and inspect artifact evidence before deciding what you might rebuild.
 
-![StackRinse inventory of a temporary development workspace](docs/screenshots/overview-linux-native.png)
+![StackRinse desktop interface showing measured storage and its artifact breakdown](docs/screenshots/sprint8/overview-dark.png)
+
+- **Measure.** Break down observed bytes by artifact type or ecosystem, with reviewable and protected totals.
+- **Understand.** Explore detection evidence, rebuild implications, and project protection.
+- **Compare.** Track comparable scans on this device and export inventory to JSON or CSV.
+
+**Development status.** Scans run locally inside the folders you choose. Cleanup review is a read-only dry run. Logical size measures file lengths. For current setup, [run from source](#run-the-desktop-application). See the [safety model](docs/safety.md), [desktop gallery](docs/visual-audit.md), and [Windows preview packaging plan](docs/windows-preview.md).
 
 ## Try the CLI
 

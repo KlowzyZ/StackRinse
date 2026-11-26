@@ -4,7 +4,7 @@
 
 The shared scanner, CLI and desktop workbench support read-only discovery and dry-run review. The desktop adds local scan history, compatible storage comparisons, and JSON and CSV reporting. CI compiles the native application and runs workspace tests on Linux, macOS and Windows.
 
-The next milestone is hands-on Windows evaluation, followed by qualification of a packaged read-only preview. Exercise native pickers, keyboard and screen-reader navigation, high-DPI displays, large inventories and cancellation on slow volumes. Record platform, filesystem, fixture size and observed gaps for each run.
+The next milestone is a private Windows x64 preview for maintainer evaluation. Build the standalone desktop executable with embedded assets, then test it on a clean Windows account with WebView2. Exercise native pickers, keyboard and screen-reader navigation, high-DPI displays, large inventories and cancellation on slow volumes. Follow the [private preview workflow](windows-preview.md).
 
 ### Further ecosystem coverage
 

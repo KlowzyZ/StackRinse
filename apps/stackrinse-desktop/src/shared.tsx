@@ -46,10 +46,13 @@ export function ProjectRow({
   open,
 }: {
   p: Project;
-  open: (p: Project) => void;
+  open: (p: Project, button?: HTMLButtonElement) => void;
 }) {
   return (
-    <button className="projectRow" onClick={() => open(p)}>
+    <button
+      className="projectRow"
+      onClick={(event) => open(p, event.currentTarget)}
+    >
       <span className="folderIcon">
         <Folder size={17} />
       </span>

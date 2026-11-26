@@ -14,16 +14,15 @@ import {
   History,
   LayoutDashboard,
   LockKeyhole,
-  Monitor,
   ScanLine,
   Settings2,
   ShieldCheck,
   Square,
-  Terminal,
   X,
 } from "lucide-react";
 import "@fontsource-variable/inter";
 import "@fontsource/ibm-plex-mono/400.css";
+import { version } from "../package.json";
 import mark from "../src-tauri/icons/mark.svg";
 import "./style.css";
 import { Overview } from "./overview";
@@ -86,6 +85,8 @@ function App() {
     [plan, setPlan] = useState<Plan | null>(null);
   const reviewPanel = useRef<HTMLElement>(null);
   const restoreReviewFocus = useRef(false);
+  const main = useRef<HTMLElement>(null);
+  const projectReturn = useRef<{ button: HTMLElement; top: number } | null>(null);
   const heading = useRef<HTMLHeadingElement>(null),
     scanLock = useRef(false),
     settingLock = useRef(false);
@@ -142,12 +143,26 @@ function App() {
     if (s === "History") void history.reload();
     requestAnimationFrame(() => {
       heading.current?.focus();
-      document.querySelector("main")?.scrollTo(0, 0);
+      main.current?.scrollTo(0, 0);
     });
   };
-  const open = (p: Project) => {
+  const open = (p: Project, source?: HTMLButtonElement) => {
+    projectReturn.current =
+      screen === "Projects" && source
+        ? { button: source, top: main.current?.scrollTop ?? 0 }
+        : null;
     setDetail(p);
     navigate("Project details");
+  };
+  const backToProjects = () => {
+    const previous = projectReturn.current;
+    projectReturn.current = null;
+    navigate("Projects");
+    requestAnimationFrame(() => {
+      if (!previous?.button.isConnected) return;
+      main.current?.scrollTo(0, previous.top);
+      previous.button.focus({ preventScroll: true });
+    });
   };
   const clearInventory = () => {
     setReport(null);
@@ -299,26 +314,36 @@ function App() {
   const change = (s: Screen) =>
     s === "Cleanup review" ? void review() : navigate(s);
   const active = screen === "Project details" ? "Projects" : screen;
+  const scanAction = (
+    <button className="primary" disabled={busy} onClick={() => void scan()}>
+      {settings.roots.length ? <ScanLine size={17} /> : <FolderOpen size={17} />}
+      {scanPhase === "choosing" ? "Choosing folder…" : "Scan folders"}
+    </button>
+  );
   return (
     <div className="shell">
+      <a className="skipLink" href="#main-content" onClick={(event) => {
+        event.preventDefault();
+        heading.current?.focus();
+      }}>Skip to content</a>
       <aside>
         <div className="brand">
           <img src={mark} alt="" />
-          <span>StackRinse</span>
+          <span>StackRinse<small>by KLOWZY</small></span>
         </div>
-        <span className="navLabel">Workspace</span>
         <nav aria-label="Workspace">
           {navigation.slice(0, 4).map(({ name, icon: Icon }) => (
             <button
               key={name}
               title={name}
+              aria-label={name}
               aria-current={active === name ? "page" : undefined}
               onClick={() => change(name)}
             >
               <Icon />
               {<span>{name}</span>}
               {name === "Cleanup review" && !!selected.size && (
-                <small>{selected.size}</small>
+                <small aria-hidden="true">{selected.size}</small>
               )}
             </button>
           ))}
@@ -327,6 +352,7 @@ function App() {
           <nav aria-label="Preferences">
             <button
               title="Settings"
+              aria-label="Settings"
               aria-current={active === "Settings" ? "page" : undefined}
               onClick={() => change("Settings")}
             >
@@ -334,33 +360,28 @@ function App() {
               <span>Settings</span>
             </button>
           </nav>
-          <div className="byline">
-            <img src={mark} alt="" />
-            <span>by KLOWZY</span>
-          </div>
         </div>
       </aside>
       <div className="workbench">
         <header className="topbar">
           <div>
-            <Monitor size={14} />
             <span>Workspace</span>
             <ChevronRight size={12} />
             <b>{active}</b>
           </div>
           <span className="local">
-            <i />
-            Local session
+            <ShieldCheck size={14} />
+            Local · Read-only
           </span>
         </header>
-        <main>
+        <main id="main-content" ref={main}>
           <div className="canvas">
             <div className="pageHead">
               <div>
                 {screen === "Project details" && (
                   <button
                     className="linkBtn back"
-                    onClick={() => navigate("Projects")}
+                    onClick={backToProjects}
                   >
                     <ArrowLeft size={14} />
                     Projects
@@ -369,30 +390,16 @@ function App() {
                 <h1 tabIndex={-1} ref={heading}>
                   {screen === "Project details" ? detail?.name : titles[screen]}
                 </h1>
-                <p>
-                  {screen === "Project details"
-                    ? detail?.path
-                    : subtitles[screen]}
-                </p>
+                {(screen !== "Overview" || report) && (
+                  <p>{screen === "Project details" ? detail?.path : subtitles[screen]}</p>
+                )}
               </div>
-              {(scanning || ["Overview", "Projects"].includes(screen)) &&
-                (scanning ? (
-                  <button disabled={cancelling} onClick={() => void cancel()}>
-                    <Square size={14} />
-                    {cancelling ? "Cancelling…" : "Cancel scan"}
-                  </button>
-                ) : (
-                  <button
-                    className="primary"
-                    disabled={busy}
-                    onClick={() => void scan()}
-                  >
-                    <ScanLine size={17} />
-                    {scanPhase === "choosing"
-                      ? "Choosing folder…"
-                      : "Scan folders"}
-                  </button>
-                ))}
+              {scanning ? (
+                <button disabled={cancelling} onClick={() => void cancel()}>
+                  <Square size={14} />
+                  {cancelling ? "Cancelling…" : "Cancel scan"}
+                </button>
+              ) : (screen === "Projects" || (screen === "Overview" && report)) && scanAction}
             </div>
             {error && (
               <div className="alert" role="alert">
@@ -406,7 +413,10 @@ function App() {
             {scanning && (
               <div className="scanStatus" role="status">
                 <Activity size={16} />
-                Scanning workspace{" "}
+                <div>
+                  <strong>Scanning workspace</strong>
+                  <p>Reading project manifests and measuring artifacts</p>
+                </div>
                 <span>{visited.toLocaleString()} directories visited</span>
               </div>
             )}
@@ -426,6 +436,8 @@ function App() {
             {screen === "Overview" && (
                 <Overview
                   report={report}
+                  scanning={scanning}
+                  scanAction={scanAction}
                   roots={settings.roots.length}
                   open={open}
                   explore={() => navigate("Projects")}
@@ -497,7 +509,10 @@ function App() {
                           : "candidates"}
                       </span>
                     </div>
-                    <p className="prefHint">Quarantine would move verified items into local recovery storage. A same-volume move generally frees no disk space. Restoration would return an item only if its original location is available. Quarantine, restoration and permanent deletion are unavailable.</p>
+                    <p className="prefHint">
+                      This preview shows selected paths and their logical sizes. Those
+                      sizes measure file lengths. Actual disk usage depends on the filesystem.
+                    </p>
                     <CandidateList candidates={plan.candidates}>
                       {(c) => (
                         <article className="candidate" key={c.path}>
@@ -551,10 +566,7 @@ function App() {
                   >
                     Browse projects <ArrowRight size={14} />
                   </button>
-                  <button disabled>
-                    <LockKeyhole size={14} />
-                    Clean selected
-                  </button>
+                  <span className="reviewUnavailable"><LockKeyhole size={14} /> Cleanup unavailable</span>
                 </footer>
               </section>
             )}
@@ -582,12 +594,10 @@ function App() {
         </main>
         <footer className="statusbar">
           <span>
-            <ShieldCheck size={13} />
-            Read-only mode
+            Clean builds. Keep code.
           </span>
           <span>
-            <Terminal size={13} />
-            StackRinse 0.1.0
+            StackRinse {version}
           </span>
         </footer>
       </div>
