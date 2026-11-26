@@ -8,7 +8,7 @@ The next milestone is hands-on Windows evaluation, followed by qualification of 
 
 ### Further ecosystem coverage
 
-Android modules with Gradle manifests use the existing Gradle rule. Android-specific intermediate layouts need independent fixtures. Flutter shares Dart project metadata and needs SDK-specific evidence. Godot imported assets and Unity library caches need fixtures that distinguish generated imports from editor state and local changes. Global Go build caches and arbitrary CMake binary directories remain outside the project-local rules.
+Android modules can use the Gradle build and project-local cache rules. Flutter packages can use Pub metadata discovery. Android-specific and Flutter-specific intermediates need their own native tool fixtures. Unity, Unreal, SwiftPM, Xcode and Bundler require project-local evidence and tests that distinguish generated state from sources and deliverables. The [ecosystem audit](ecosystems.md) records the evidence gaps.
 
 ## Safe cleaning
 

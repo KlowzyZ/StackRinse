@@ -7,7 +7,7 @@ use rusqlite::{
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use stackrinse_core::{InventoryTotals, Report};
+use stackrinse_core::{InventoryTotals, Report, DISCOVERY_RULE_VERSION};
 use std::{
     collections::BTreeMap,
     fs::{self, OpenOptions},
@@ -18,8 +18,6 @@ use std::{
 
 const SCHEMA_VERSION: i64 = 1;
 const APPLICATION_ID: i64 = 0x5352_494e;
-// Bump when discovery, attribution, or logical-size rules change.
-const COMPARISON_VERSION: u32 = 1;
 const DEFAULT_RETENTION: u32 = 50;
 const MAX_RETENTION: u32 = 100;
 const MAX_PAYLOAD_BYTES: usize = 24 * 1024 * 1024;
@@ -39,6 +37,8 @@ pub struct Summary {
     completed_at_ms: i64,
     duration_ms: u64,
     scope_key: String,
+    #[serde(default = "legacy_rule_version")]
+    discovery_rule_version: u32,
     root_hint: String,
     root_count: usize,
     project_count: usize,
@@ -48,6 +48,10 @@ pub struct Summary {
     directories: u64,
     complete: bool,
     totals: InventoryTotals,
+}
+
+fn legacy_rule_version() -> u32 {
+    1 // Sprint 4 stored this version in the fingerprint only.
 }
 
 #[derive(Serialize)]
@@ -154,7 +158,7 @@ impl Snapshot {
         if report.cancelled {
             return Err("Cancelled scans are excluded from history and export.".into());
         }
-        let scope_json = serde_json::to_vec(&(COMPARISON_VERSION, &report.scope))
+        let scope_json = serde_json::to_vec(&(DISCOVERY_RULE_VERSION, &report.scope))
             .map_err(|error| error.to_string())?;
         let mut ecosystems = Breakdown::new();
         let mut categories = Breakdown::new();
@@ -200,6 +204,7 @@ impl Snapshot {
                 completed_at_ms: timing.completed_at_ms,
                 duration_ms: timing.duration_ms,
                 scope_key: format!("{:x}", Sha256::digest(scope_json)),
+                discovery_rule_version: DISCOVERY_RULE_VERSION,
                 root_hint: report.scope.roots.first().map_or_else(String::new, |root| {
                     capped_text(&root.to_string_lossy(), 512)
                 }),
@@ -293,9 +298,12 @@ fn compare(before: &Snapshot, after: &Snapshot) -> Result<Comparison> {
     if !before.summary.complete || !after.summary.complete {
         return Err("Choose two complete inventories to compare.".into());
     }
+    if before.summary.discovery_rule_version != after.summary.discovery_rule_version {
+        return Err("These scans used different discovery rules. Run a fresh scan to start a comparable series.".into());
+    }
     if before.summary.scope_key != after.summary.scope_key {
         return Err(
-            "These scans used different folders, exclusions, protection or inventory rules.".into(),
+            "These scans used different folders, exclusions or protection settings.".into(),
         );
     }
     let mut comparison = Comparison {

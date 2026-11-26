@@ -21,29 +21,38 @@ import {
 } from "./model";
 import { Empty, ProjectRow, RiskLabel } from "./shared";
 
+type Breakdown = "category" | "ecosystem";
+
 function Distribution({
   entries,
   scanned,
+  breakdown,
 }: {
   entries: [string, number][];
   scanned: boolean;
+  breakdown: Breakdown;
 }) {
   const [active, setActive] = useState<string | null>(null);
   const total = entries.reduce((n, e) => n + e[1], 0);
   const selected = entries.find((e) => e[0] === active);
-  const share =
-    selected && total > 0 ? Math.round((selected[1] / total) * 100) : null;
+  const share = selected && total > 0 ? (selected[1] / total) * 100 : null;
+  const shareLabel =
+    share === null
+      ? null
+      : share > 0 && share < 1
+        ? "<1%"
+        : Math.round(share) + "%";
   const dialValue = !scanned
     ? "—"
     : !selected
       ? entries.length
-      : share === null
-        ? bytes(selected[1])
-        : share + "%";
+      : (shareLabel ?? bytes(selected[1]));
   const dialUnit = !selected
     ? entries.length === 1
-      ? "category"
-      : "categories"
+      ? breakdown
+      : breakdown === "category"
+        ? "categories"
+        : "ecosystems"
     : share === null
       ? "observed"
       : "of inventory";
@@ -58,9 +67,13 @@ function Distribution({
             ? selected[0] +
               ", " +
               bytes(selected[1]) +
-              (share === null ? "" : ", " + share + "% of inventory")
+              (shareLabel === null
+                ? ""
+                : ", " +
+                  (shareLabel === "<1%" ? "less than 1%" : shareLabel) +
+                  " of inventory")
             : scanned
-              ? "Artifact category distribution in logical bytes"
+              ? "Artifact " + breakdown + " distribution in logical bytes"
               : "Storage map awaiting scan"
         }
       >
@@ -107,7 +120,11 @@ function Distribution({
         </div>
       </div>
       <div className="legend">
-        <h3>Artifact breakdown</h3>
+        <h3>
+          {breakdown === "category"
+            ? "Artifact breakdown"
+            : "Ecosystem breakdown"}
+        </h3>
         {entries.length ? (
           entries.map(([name, n], i) => (
             <button
@@ -131,8 +148,8 @@ function Distribution({
         ) : (
           <p>
             {scanned
-              ? "No artifact categories measured."
-              : "Category sizes appear after a workspace scan."}
+              ? "No artifacts measured."
+              : "Sizes appear after a workspace scan."}
           </p>
         )}
       </div>
@@ -156,9 +173,13 @@ export function Overview({
   busy: boolean;
   savedScan: ReactNode;
 }) {
+  const [breakdown, setBreakdown] = useState<Breakdown>("category");
   const data = useMemo(() => {
-    const projects = report?.projects || [],
-      groups = new Map<string, number>();
+    const projects = report?.projects || [];
+    const groups = {
+      category: new Map<string, number>(),
+      ecosystem: new Map<string, number>(),
+    };
     const counts: Record<Risk, number> = {
       rebuildable: 0,
       review_required: 0,
@@ -173,14 +194,20 @@ export function Overview({
         partialSize ||= !c.size_complete;
         counts[c.classification]++;
         sizes[c.classification] += c.logical_bytes;
-        groups.set(c.category, (groups.get(c.category) || 0) + c.logical_bytes);
+        for (const kind of ["category", "ecosystem"] as const) {
+          const group = groups[kind];
+          group.set(c[kind], (group.get(c[kind]) || 0) + c.logical_bytes);
+        }
       }
     return {
       count,
       counts,
       partialSize,
       sizes,
-      entries: [...groups.entries()].sort((a, b) => b[1] - a[1]),
+      entries: {
+        category: [...groups.category].sort((a, b) => b[1] - a[1]),
+        ecosystem: [...groups.ecosystem].sort((a, b) => b[1] - a[1]),
+      },
       top: [...projects]
         .sort((a, b) => b.logical_bytes - a.logical_bytes)
         .slice(0, 5),
@@ -200,7 +227,25 @@ export function Overview({
             <ScanLine />
             {report ? "Current session inventory" : "Storage map"}
           </div>
-          <span className="mono muted">Logical file size</span>
+          <div className="breakdownControls">
+            <span className="mono muted">Logical file size</span>
+            {report && (
+              <select
+                aria-label="Group storage map"
+                value={breakdown}
+                onChange={(event) =>
+                  setBreakdown(
+                    event.target.value === "ecosystem"
+                      ? "ecosystem"
+                      : "category",
+                  )
+                }
+              >
+                <option value="category">By artifact type</option>
+                <option value="ecosystem">By ecosystem</option>
+              </select>
+            )}
+          </div>
         </header>
         <div className="instrumentBody">
           <div className="measurement">
@@ -247,7 +292,12 @@ export function Overview({
               })}
             </dl>
           </div>
-          <Distribution entries={data.entries} scanned={!!report} />
+          <Distribution
+            key={breakdown}
+            entries={data.entries[breakdown]}
+            scanned={!!report}
+            breakdown={breakdown}
+          />
         </div>
         <footer className="instrumentFoot">
           <span
@@ -264,7 +314,13 @@ export function Overview({
             {roots} scan {roots === 1 ? "root" : "roots"}
           </span>
         </footer>
-        {report && !report.cancelled && <ExportControl key={report.completedAtMs} source={{ kind: "fresh" }} disabled={busy} />}
+        {report && !report.cancelled && (
+          <ExportControl
+            key={report.completedAtMs}
+            source={{ kind: "fresh" }}
+            disabled={busy}
+          />
+        )}
       </section>
       {savedScan}
       {!!report?.warnings.length && (

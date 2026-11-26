@@ -415,7 +415,7 @@ fn a_cancelled_deep_scan_can_be_repeated_without_stale_inventory() {
 }
 
 #[test]
-fn shared_gradle_and_cmake_output_is_measured_once() {
+fn shared_gradle_and_cmake_output_is_measured_once_and_protected() {
     let (_temp, root) = root();
     file(&root, "CMakeLists.txt", "");
     file(&root, "build.gradle", "");
@@ -425,7 +425,9 @@ fn shared_gradle_and_cmake_output_is_measured_once() {
     let report = inventory(&root, Default::default());
     assert_eq!(report.projects[0].candidates.len(), 1);
     assert_eq!(report.totals().logical_bytes, 5);
-    assert_eq!(dry_run(&report).logical_bytes(), 5);
+    assert_eq!(report.projects[0].candidates[0].ecosystem, "Mixed evidence");
+    assert_eq!(report.totals().protected_bytes, 5);
+    assert!(dry_run(&report).candidates().is_empty());
 }
 
 #[cfg(unix)]

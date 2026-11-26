@@ -15,6 +15,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ExportControl } from "./export-control";
 import {
   compatibleScans,
+  sameComparableScope,
   formatChartDate,
   formatScanDate,
   signedBytes,
@@ -82,11 +83,9 @@ function StorageTrend({
   selected: HistoryEntry;
   entries: HistoryEntry[];
 }) {
-  const sameScope = selected.complete
-    ? entries.filter(
-        (entry) => entry.complete && entry.scope_key === selected.scope_key,
-      )
-    : [];
+  const sameScope = entries.filter((entry) =>
+    sameComparableScope(entry, selected),
+  );
   // Keep the selected observation visible, even when inspecting older history.
   const selectedOffset = sameScope.findIndex(
     (entry) => entry.id === selected.id,
@@ -507,7 +506,8 @@ function DetailPanel({
               ))}
             </ul>
             <p className="muted">
-              {entry.directories.toLocaleString()} directories visited
+              {entry.directories.toLocaleString()} directories visited ·
+              Discovery rules v{entry.discovery_rule_version}
             </p>
             {!!detail.exclusions.length && (
               <p className="scopePaths">

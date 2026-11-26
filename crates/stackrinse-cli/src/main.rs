@@ -176,7 +176,7 @@ fn inventory(out: &mut impl Write, report: &Report, details: bool) -> io::Result
                 };
                 writeln!(
                     out,
-                    "    {} · {} · {} · {}",
+                    "    {} · {} · {} · {} · {}",
                     terminal_text(&c.path.to_string_lossy()),
                     if c.size_complete {
                         size(c.logical_bytes)
@@ -184,9 +184,17 @@ fn inventory(out: &mut impl Write, report: &Report, details: bool) -> io::Result
                         format!("{} observed (partial)", size(c.logical_bytes))
                     },
                     classification,
+                    c.ecosystem,
                     c.category
                 )?;
                 writeln!(out, "      Evidence: {}", terminal_text(&c.reason))?;
+                if let Some(evidence) = c
+                    .evidence
+                    .as_deref()
+                    .filter(|_| c.classification == Classification::Protected)
+                {
+                    writeln!(out, "      Observed markers: {}", terminal_text(evidence))?;
+                }
                 writeln!(
                     out,
                     "      Rebuild ({} cost): {}",

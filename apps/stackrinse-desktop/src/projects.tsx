@@ -264,9 +264,16 @@ export function ProjectDetails({
                 <RiskLabel
                   risk={protectedNow ? "protected" : c.classification}
                 />
-                <span>{c.category}</span>
+                <span>
+                  {c.ecosystem} · {c.category}
+                </span>
               </div>
               <p>{c.reason}</p>
+              {c.classification === "protected" && c.evidence && (
+                <p>
+                  <b>Observed evidence</b> {c.evidence}
+                </p>
+              )}
               <p>
                 <b>Rebuild</b> {c.rebuild}
               </p>

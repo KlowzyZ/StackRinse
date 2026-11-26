@@ -1,6 +1,8 @@
 export type Risk = "rebuildable" | "review_required" | "protected";
 export interface Candidate {
   path: string;
+  ecosystem: string;
+  evidence?: string;
   category: string;
   logical_bytes: number;
   size_complete: boolean;
@@ -20,6 +22,7 @@ export interface Project {
   candidates: Candidate[];
 }
 export interface Report {
+  discovery_rule_version: number;
   totals: {
     logical_bytes: number;
     reviewable_bytes: number;
