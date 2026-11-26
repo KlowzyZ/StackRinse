@@ -44,11 +44,15 @@ Build locally with `npm run tauri build`. Dependency installation and initial bu
 | CMake project (`CMakeLists.txt`) | A conventional out-of-source build directory containing both `CMakeCache.txt` and `CMakeFiles/` |
 | Node.js manifest | Package-manager metadata in `node_modules`, framework output markers in `.next` and `.nuxt` |
 | Python manifest | `pyvenv.cfg` inside an environment, pytest cache marker, interpreter-named bytecode beside matching source |
+| Python manifest | Ruff and mypy cache-tag signatures and each tool's generated ignore header |
+| Dart Pub manifest (`pubspec.yaml`) | Paired package configuration and package graph in `.dart_tool` |
+| Composer manifest (`composer.json`) | Installed-package metadata and both autoload entry files in `vendor` |
 | Cargo manifest | Compiler metadata or cache tag in `target` |
 | .NET project file | NuGet assets in `obj`, build configuration directories in `bin` |
 | Maven or Gradle build file | Class or generator directories in the corresponding build output |
+| Gradle build file | Project-local `.gradle` cache properties and binary output index |
 
-Recognition uses filesystem structure and metadata. A valid-looking name can still contain hand edits. The engine checks Git index membership in repositories using a local Git installation and protects candidates when it cannot verify the index.
+Recognition uses filesystem structure, metadata, and bounded reads of known cache signatures. A valid-looking name can still contain hand edits. The engine checks Git index membership in repositories using a local Git installation and protects candidates when it cannot verify the index. When several ecosystems provide evidence for the same directory, its bytes appear once as mixed evidence and the directory is protected.
 
 CMake discovery checks `build`, `cmake-build-debug` and `cmake-build-release`. A build-output directory containing its own `CMakeLists.txt` is left for project discovery. Go vendor trees and CMake builds require manual review.
 
@@ -64,7 +68,7 @@ The desktop **History** screen keeps finished scans on this device, including sc
 
 Use **History settings** to change retention or clear saved scans. **Export inventory** opens a native Save dialog for a JSON or CSV report from the current session or a saved scan. Reports may contain local filesystem paths, so review them before sharing.
 
-See the [filesystem safety model](docs/safety.md), [architecture](docs/architecture.md) and [roadmap](docs/roadmap.md).
+See the [ecosystem coverage and evidence](docs/ecosystems.md), [filesystem safety model](docs/safety.md), [architecture](docs/architecture.md) and [roadmap](docs/roadmap.md).
 
 ## Development
 

@@ -40,7 +40,7 @@ export async function connectDesktop(
       for (const candidate of project.candidates) {
         categories[candidate.category] =
           (categories[candidate.category] ?? 0) + candidate.logical_bytes;
-        const ecosystem = project.ecosystems[0]!;
+        const ecosystem = candidate.ecosystem;
         ecosystems[ecosystem] =
           (ecosystems[ecosystem] ?? 0) + candidate.logical_bytes;
       }
@@ -50,7 +50,9 @@ export async function connectDesktop(
         id: nextId++,
         completed_at_ms: completedAtMs,
         duration_ms: duration,
+        discovery_rule_version: report.discovery_rule_version,
         scope_key: JSON.stringify([
+          report.discovery_rule_version,
           settings.roots,
           settings.excludedNames,
           settings.protectedProjects,

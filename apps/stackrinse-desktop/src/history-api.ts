@@ -7,6 +7,7 @@ export interface HistoryEntry {
   completed_at_ms: number;
   duration_ms: number;
   scope_key: string;
+  discovery_rule_version: number;
   root_hint: string;
   root_count: number;
   project_count: number;
@@ -96,10 +97,18 @@ export function compatibleScans(entries: HistoryEntry[], entry: HistoryEntry) {
   return entry.complete
     ? entries.filter(
         (e) =>
-          e.complete &&
-          e.scope_key === entry.scope_key &&
+          sameComparableScope(e, entry) &&
           (e.completed_at_ms < entry.completed_at_ms ||
             (e.completed_at_ms === entry.completed_at_ms && e.id < entry.id)),
       )
     : [];
+}
+
+export function sameComparableScope(first: HistoryEntry, second: HistoryEntry) {
+  return (
+    first.complete &&
+    second.complete &&
+    first.discovery_rule_version === second.discovery_rule_version &&
+    first.scope_key === second.scope_key
+  );
 }

@@ -7,6 +7,9 @@ use std::path::PathBuf;
 
 pub use scanner::{scan, ScanError};
 
+/// Increment when discovery, artifact attribution, or measurement semantics change.
+pub const DISCOVERY_RULE_VERSION: u32 = 2;
+
 #[derive(Default, Debug, Clone)]
 pub struct ScanOptions {
     /// Absolute path prefixes or directory basenames.
@@ -48,8 +51,9 @@ pub enum Cost {
 #[derive(Clone, Debug, Serialize)]
 pub struct Candidate {
     pub path: PathBuf,
-    #[serde(skip_serializing)]
     pub ecosystem: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub evidence: Option<String>,
     pub category: String,
     pub logical_bytes: u64,
     /// False when policy boundaries or read errors skipped entries.
@@ -129,7 +133,8 @@ impl Report {
 
 impl Serialize for Report {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut view = serializer.serialize_struct("Report", 5)?;
+        let mut view = serializer.serialize_struct("Report", 6)?;
+        view.serialize_field("discovery_rule_version", &DISCOVERY_RULE_VERSION)?;
         view.serialize_field("projects", &self.projects)?;
         view.serialize_field("warnings", &self.warnings)?;
         view.serialize_field("cancelled", &self.cancelled)?;

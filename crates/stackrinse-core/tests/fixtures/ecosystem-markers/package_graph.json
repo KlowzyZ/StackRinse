@@ -1,0 +1,14 @@
+{
+  "roots": [
+    "storage_sample"
+  ],
+  "packages": [
+    {
+      "name": "storage_sample",
+      "version": "0.0.0",
+      "dependencies": [],
+      "devDependencies": []
+    }
+  ],
+  "configVersion": 1
+}

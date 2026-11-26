@@ -18,6 +18,17 @@ pub fn linked(meta: &Metadata) -> bool {
     meta.file_type().is_symlink()
 }
 
+#[cfg(unix)]
+pub fn other_volume(root: &Metadata, child: &Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    root.dev() != child.dev()
+}
+
+#[cfg(windows)]
+pub fn other_volume(_: &Metadata, _: &Metadata) -> bool {
+    false
+}
+
 pub fn system_path(path: &Path) -> bool {
     #[cfg(unix)]
     {

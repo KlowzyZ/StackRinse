@@ -3,6 +3,7 @@ use crate::{
 };
 use rayon::prelude::*;
 use std::{
+    borrow::Cow,
     fs, io,
     path::{Component, Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
@@ -63,19 +64,19 @@ fn stopped(cancel: &AtomicBool) -> bool {
     cancel.load(Ordering::Relaxed)
 }
 
-#[cfg(unix)]
-fn other_volume(root: &fs::Metadata, child: &fs::Metadata) -> bool {
-    use std::os::unix::fs::MetadataExt;
-    root.dev() != child.dev()
+struct MarkerMatch {
+    rule: &'static rules::Rule,
+    evidence: Cow<'static, str>,
 }
-#[cfg(windows)]
-fn other_volume(_: &fs::Metadata, _: &fs::Metadata) -> bool {
-    false
+
+enum Detection {
+    Bytecode,
+    Markers(MarkerMatch, Option<MarkerMatch>),
 }
 
 fn measure(
     path: &Path,
-    rule: &rules::Rule,
+    detection: Detection,
     options: &ScanOptions,
     cancel: &AtomicBool,
     protection: Option<&str>,
@@ -85,12 +86,20 @@ fn measure(
         .file_name()
         .and_then(|name| name.to_str())
         .expect("only Unicode candidates are measured");
-    let mut blocked = protection.map(str::to_owned);
+    let (rule, marker, conflict) = match detection {
+        Detection::Bytecode => (&rules::PYTHON_BYTECODE, None, None),
+        Detection::Markers(first, conflict) => (first.rule, Some(first.evidence), conflict),
+    };
+    let mut blocked = protection.map(str::to_owned).or_else(|| {
+        conflict.as_ref().map(|second| {
+            format!("{} and {} evidence overlaps in this directory. Its contents require separate inspection.", rule.ecosystem, second.rule.ecosystem)
+        })
+    });
     let mut bytes = 0u64;
     let mut read_error = None;
     let mut size_complete = true;
     let mut files = 0u64;
-    let bytecode = rule.names == ["__pycache__"];
+    let bytecode = matches!(rule.evidence, rules::Evidence::PythonBytecode);
     let mut all_bytecode = true;
     let base_meta = fs::symlink_metadata(project);
     let mut walk = WalkDir::new(path)
@@ -139,7 +148,9 @@ fn measure(
             }
         };
         if policy::linked(&meta)
-            || base_meta.as_ref().map_or(true, |m| other_volume(m, &meta))
+            || base_meta
+                .as_ref()
+                .map_or(true, |m| policy::other_volume(m, &meta))
             || !(meta.is_dir() || meta.is_file())
         {
             size_complete = false;
@@ -176,11 +187,17 @@ fn measure(
             "Only interpreter-named bytecode with corresponding source modules was observed."
                 .into(),
         ),
-        None => match rules::matched_marker(path, rule) {
-            Ok(Some(marker)) => (
+        None => match fs::symlink_metadata(path).and_then(|meta| {
+            let Ok(volume) = &base_meta else { return Ok(None); };
+            if policy::linked(&meta) || !meta.is_dir() || policy::other_volume(volume, &meta) {
+                return Ok(None);
+            }
+            rules::matched_marker(path, rule, options, volume)
+        }) {
+            Ok(Some(current)) if marker.as_ref() == Some(&current) => (
                 Classification::ReviewRequired,
                 format!(
-                    "{} project and {marker} marker found. Review the directory for local changes.",
+                    "{} project and {current} marker found. Review the directory for local changes.",
                     rule.ecosystem
                 ),
             ),
@@ -189,7 +206,7 @@ fn measure(
                 read_error = Some(message.clone());
                 (Classification::Protected, message)
             }
-            Ok(None) => {
+            Ok(_) => {
                 read_error = Some(format!(
                     "{}: artifact evidence changed during the scan.",
                     path.display()
@@ -201,17 +218,35 @@ fn measure(
             }
         },
     };
+    let evidence = marker.map(|marker| match &conflict {
+        Some(second) => format!(
+            "{}: {marker}. {}: {}.",
+            rule.ecosystem, second.rule.ecosystem, second.evidence
+        ),
+        None => marker.into_owned(),
+    });
+    let (ecosystem, category, rebuild, cost) = if let Some(second) = conflict {
+        let category = if rule.category == second.rule.category {
+            rule.category
+        } else {
+            "Mixed artifacts"
+        };
+        ("Mixed evidence", category, "Identify which files belong to each tool and preserve local work before regenerating anything.", crate::Cost::Unknown)
+    } else {
+        (rule.ecosystem, rule.category, rule.rebuild, rule.cost)
+    };
     (
         Candidate {
             path: path.into(),
-            ecosystem: rule.ecosystem,
-            category: rule.category.into(),
+            ecosystem,
+            evidence,
+            category: category.into(),
             logical_bytes: bytes,
             size_complete,
             classification,
             reason,
-            rebuild: rule.rebuild.into(),
-            cost: rule.cost,
+            rebuild: rebuild.into(),
+            cost,
         },
         read_error,
     )
@@ -329,8 +364,9 @@ pub fn scan(
             }
             match fs::symlink_metadata(path) {
                 Ok(meta)
-                    if meta.is_dir() && !policy::linked(&meta) && !other_volume(&volume, &meta) => {
-                }
+                    if meta.is_dir()
+                        && !policy::linked(&meta)
+                        && !policy::other_volume(&volume, &meta) => {}
                 Ok(_) => continue,
                 Err(e) => {
                     warning(&mut report.warnings, format!("{}: {e}", path.display()));
@@ -368,7 +404,7 @@ pub fn scan(
                             .protected
                             .then_some("The owning project is protected.");
                         let (candidate, read_error) =
-                            measure(path, &rules::PYTHON_BYTECODE, &options, cancel, protection);
+                            measure(path, Detection::Bytecode, &options, cancel, protection);
                         if !stopped(cancel) {
                             if let Some(message) = read_error {
                                 warning(&mut report.warnings, message);
@@ -448,7 +484,7 @@ pub fn scan(
                         Ok(meta)
                             if meta.is_dir()
                                 && !policy::linked(&meta)
-                                && !other_volume(&volume, &meta) => {}
+                                && !policy::other_volume(&volume, &meta) => {}
                         Ok(_) => return false,
                         Err(error) => {
                             warning(
@@ -458,25 +494,44 @@ pub fn scan(
                             return false;
                         }
                     }
-                    for rule in matching {
-                        match rules::matched_marker(artifact, rule) {
-                            Ok(marker) if rule.evidence.is_empty() || marker.is_some() => {
-                                jobs.push((artifact.clone(), rule));
-                                return true;
-                            }
-                            Ok(_) => {}
-                            Err(error) => warning(&mut report.warnings, error.to_string()),
+                    let mut matches = matching.filter_map(|rule| {
+                        if matches!(rule.evidence, rules::Evidence::PythonBytecode) {
+                            return Some(MarkerMatch {
+                                rule,
+                                evidence: Cow::Borrowed(""),
+                            });
                         }
-                    }
-                    false
+                        match rules::matched_marker(artifact, rule, &options, &volume) {
+                            Ok(marker) => marker.map(|evidence| MarkerMatch { rule, evidence }),
+                            Err(error) => {
+                                warning(&mut report.warnings, error.to_string());
+                                None
+                            }
+                        }
+                    });
+                    let Some(first) = matches.next() else {
+                        return false;
+                    };
+                    let detection =
+                        if matches!(first.rule.evidence, rules::Evidence::PythonBytecode) {
+                            Detection::Bytecode
+                        } else {
+                            let conflict =
+                                matches.find(|other| other.rule.ecosystem != first.rule.ecosystem);
+                            Detection::Markers(first, conflict)
+                        };
+                    jobs.push((artifact.clone(), detection));
+                    true
                 })
                 .for_each(drop);
             if stopped(cancel) {
                 break;
             }
             let measurements: Vec<_> = pool.install(|| {
-                jobs.par_iter()
-                    .map(|(artifact, rule)| measure(artifact, rule, &options, cancel, protection))
+                jobs.into_par_iter()
+                    .map(|(artifact, detection)| {
+                        measure(&artifact, detection, &options, cancel, protection)
+                    })
                     .collect()
             });
             if stopped(cancel) {

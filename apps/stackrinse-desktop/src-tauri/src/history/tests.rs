@@ -376,3 +376,136 @@ fn exports_unicode_json_and_safe_csv_without_overwriting() {
     }
     assert_eq!(fs::read_dir(&root).unwrap().count(), count);
 }
+
+#[test]
+fn pre_upgrade_snapshots_stay_readable_and_compare_only_with_their_rule_version() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    project(&root, "shared", 20);
+    let report = scan(
+        &[root],
+        &ScanOptions::default(),
+        &AtomicBool::new(false),
+        |_| {},
+    )
+    .unwrap();
+    let store = HistoryStore(dir.path().join("history"));
+    let legacy_scope = format!(
+        "{:x}",
+        Sha256::digest(serde_json::to_vec(&(1, &report.scope)).unwrap())
+    );
+    for completed_at in [1, 2] {
+        let legacy = Snapshot::capture(&report, timing(completed_at)).unwrap();
+        let mut summary = serde_json::to_value(&legacy.summary).unwrap();
+        let fields = summary.as_object_mut().unwrap();
+        fields.remove("discovery_rule_version");
+        fields.insert("scope_key".into(), legacy_scope.clone().into());
+        let db = store.connect().unwrap();
+        db.execute(
+            "INSERT INTO scans (completed_at_ms, summary, inventory) VALUES (?1, ?2, ?3)",
+            params![
+                completed_at,
+                serde_json::to_vec(&summary).unwrap(),
+                serde_json::to_vec(&legacy.inventory).unwrap()
+            ],
+        )
+        .unwrap();
+    }
+    let current = Snapshot::capture(&report, timing(3)).unwrap();
+    assert_ne!(legacy_scope, current.summary.scope_key);
+    store.record(current).unwrap();
+    assert_eq!(
+        store
+            .list()
+            .unwrap()
+            .entries
+            .iter()
+            .map(|entry| entry.summary.discovery_rule_version)
+            .collect::<Vec<_>>(),
+        [DISCOVERY_RULE_VERSION, 1, 1]
+    );
+    assert_eq!(
+        store.detail(1).unwrap().largest_projects[0].logical_bytes,
+        22
+    );
+    assert_eq!(store.compare(1, 2).unwrap().logical_bytes_delta, 0);
+    assert!(store
+        .compare(2, 3)
+        .err()
+        .unwrap()
+        .contains("different discovery rules"));
+    let old_export = dir.path().canonicalize().unwrap().join("previous.json");
+    export::save(
+        &old_export,
+        export::Format::Json,
+        export::Source::History { id: 1 },
+        &store.get(1).unwrap(),
+    )
+    .unwrap();
+    let view: serde_json::Value = serde_json::from_slice(&fs::read(old_export).unwrap()).unwrap();
+    assert_eq!(view["summary"]["discovery_rule_version"], 1);
+}
+
+#[test]
+fn new_ecosystems_reach_history_breakdowns_comparisons_and_both_exports() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let dart = root.join("café-dart");
+    let php = root.join("composer");
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../crates/stackrinse-core/tests/fixtures/ecosystem-markers");
+    let put = |path: PathBuf, data: &[u8]| {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, data).unwrap();
+    };
+    put(dart.join("pubspec.yaml"), b"name: cafe");
+    for name in ["package_config.json", "package_graph.json"] {
+        put(
+            dart.join(".dart_tool").join(name),
+            &fs::read(fixtures.join(name)).unwrap(),
+        );
+    }
+    put(php.join("composer.json"), br#"{"name":"example/project"}"#);
+    for (name, fixture) in [
+        ("autoload.php", "composer-autoload.txt"),
+        ("composer/autoload_real.php", "composer-autoload-real.txt"),
+        ("composer/installed.json", "composer-installed.json"),
+    ] {
+        put(
+            php.join("vendor").join(name),
+            &fs::read(fixtures.join(fixture)).unwrap(),
+        );
+    }
+    let store = HistoryStore(root.join("local-data"));
+    let before = captured(&root, &ScanOptions::default(), 1);
+    assert!(before.summary.complete);
+    let dart_bytes = before.inventory.ecosystems["Dart"];
+    let php_bytes = before.inventory.ecosystems["PHP"];
+    assert_eq!(before.summary.totals.logical_bytes, dart_bytes + php_bytes);
+    store.record(before).unwrap();
+
+    put(dart.join(".dart_tool/local"), b"12345");
+    let after = captured(&root, &ScanOptions::default(), 2);
+    store.record(after).unwrap();
+    let result = store.compare(1, 2).unwrap();
+    assert_eq!(result.logical_bytes_delta, 5);
+    assert!(result
+        .ecosystems
+        .iter()
+        .any(|bucket| bucket.name == "Dart" && bucket.after == dart_bytes + 5));
+    let report = store.get(2).unwrap();
+    assert_eq!(
+        report.inventory.categories["Tooling metadata"],
+        dart_bytes + 5
+    );
+    for (name, format) in [
+        ("fresh.json", export::Format::Json),
+        ("saved.csv", export::Format::Csv),
+    ] {
+        let path = root.join(name);
+        export::save(&path, format, export::Source::History { id: 2 }, &report).unwrap();
+        let text = fs::read_to_string(path).unwrap();
+        assert!(text.contains("discovery_rule_version"));
+        assert!(text.contains("Dart") && text.contains("PHP") && text.contains("café-dart"));
+    }
+}

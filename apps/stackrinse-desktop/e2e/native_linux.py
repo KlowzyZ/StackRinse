@@ -103,12 +103,28 @@ def smoke(binary, screenshot):
                 assert js('return document.querySelector(".reviewFoot button:last-child").disabled')
 
                 assert len(command("history_list", {})["entries"]) == 1
+                markers = (Path(__file__).resolve().parents[3] /
+                           "crates/stackrinse-core/tests/fixtures/ecosystem-markers")
+                dart_project = root / "pub-client"
+                dart_tool = dart_project / ".dart_tool"
+                dart_tool.mkdir(parents=True)
+                (dart_project / "pubspec.yaml").write_text("name: storage_sample\n")
+                dart_bytes = 0
+                for name in ["package_config.json", "package_graph.json"]:
+                    dart_bytes += (dart_tool / name).write_bytes((markers / name).read_bytes())
                 (output / "compiled").write_bytes(b"A" * 1048576)
-                assert command("scan", {})["totals"]["logical_bytes"] == 1048578
+                report = command("scan", {})
+                assert report["totals"]["logical_bytes"] == 1048578 + dart_bytes
+                dart = next(p for p in report["projects"] if p["name"] == "pub-client")
+                candidate = dart["candidates"][0]
+                assert candidate["ecosystem"] == "Dart" and candidate["classification"] == "review_required"
                 (output / "compiled").write_bytes(b"A" * 524288)
-                assert command("scan", {})["totals"]["logical_bytes"] == 524290
+                assert command("scan", {})["totals"]["logical_bytes"] == 524290 + dart_bytes
                 entries = command("history_list", {})["entries"]
                 assert len(entries) == 3 and all(entry["complete"] for entry in entries)
+                assert all(entry["discovery_rule_version"] == report["discovery_rule_version"] for entry in entries)
+                detail = command("history_detail", {"id": entries[0]["id"]})
+                assert detail["ecosystems"]["Dart"] == dart_bytes
                 result = command("history_compare", {"beforeId": entries[1]["id"], "afterId": entries[0]["id"]})
                 assert result["logical_bytes_delta"] == -524288
                 js('document.querySelector(\'nav button[title="History"]\').click()')

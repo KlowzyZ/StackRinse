@@ -3415,6 +3415,7 @@ dependencies = [
 name = "stackrinse-core"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "rayon",
  "serde",
  "tempfile",

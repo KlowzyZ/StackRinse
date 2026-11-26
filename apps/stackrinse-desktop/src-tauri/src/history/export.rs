@@ -80,6 +80,7 @@ fn write_json(output: impl Write, source: Source, snapshot: &Snapshot) -> Result
     #[derive(Serialize)]
     struct Summary<'a> {
         completed_at_ms: i64,
+        discovery_rule_version: u32,
         duration_ms: u64,
         complete: bool,
         project_count: usize,
@@ -98,6 +99,7 @@ fn write_json(output: impl Write, source: Source, snapshot: &Snapshot) -> Result
             source,
             summary: Summary {
                 completed_at_ms: summary.completed_at_ms,
+                discovery_rule_version: summary.discovery_rule_version,
                 duration_ms: summary.duration_ms,
                 complete: summary.complete,
                 project_count: summary.project_count,
@@ -113,7 +115,7 @@ fn write_json(output: impl Write, source: Source, snapshot: &Snapshot) -> Result
     .map_err(|error| format!("Could not serialize the inventory: {error}"))
 }
 
-fn csv_row(output: &mut impl Write, cells: [&str; 15]) -> io::Result<()> {
+fn csv_row(output: &mut impl Write, cells: [&str; 16]) -> io::Result<()> {
     for (index, value) in cells.into_iter().enumerate() {
         if index != 0 {
             output.write_all(b",")?;
@@ -155,6 +157,7 @@ struct Row<'a> {
     message: &'a str,
     source: &'a str,
     project_details: &'a str,
+    discovery_rule_version: Option<u32>,
 }
 
 impl Row<'_> {
@@ -180,6 +183,7 @@ impl Row<'_> {
                 self.message,
                 self.source,
                 self.project_details,
+                &number(self.discovery_rule_version),
             ],
         )
     }
@@ -206,6 +210,7 @@ fn write_csv(output: &mut impl Write, source: Source, snapshot: &Snapshot) -> io
             "message",
             "source",
             "project_details",
+            "discovery_rule_version",
         ],
     )?;
     let summary = &snapshot.summary;
@@ -213,6 +218,7 @@ fn write_csv(output: &mut impl Write, source: Source, snapshot: &Snapshot) -> io
     Row {
         record: "scan",
         completed_at_ms: Some(summary.completed_at_ms),
+        discovery_rule_version: Some(summary.discovery_rule_version),
         duration_ms: Some(summary.duration_ms),
         completeness: if summary.complete {
             "complete"
