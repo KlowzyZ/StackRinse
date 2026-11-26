@@ -214,3 +214,48 @@ fn rejects_existing_writer_links_and_junctions() -> io::Result<()> {
     assert_eq!(fs::read(file)?, b"unrelated");
     Ok(())
 }
+
+#[test]
+fn replacement_between_review_and_acquisition_changes_identity() -> io::Result<()> {
+    let fixture = tempfile::tempdir()?;
+    let original = fixture.path().join("artifact");
+    let saved = fixture.path().join("previous");
+    fs::write(&original, b"same bytes")?;
+    let reviewed = identity(&open(&original, false, FILE_READ_ATTRIBUTES)?)?;
+    fs::rename(&original, &saved)?;
+    fs::write(&original, b"same bytes")?;
+    let replacement = open(&original, false, FILE_READ_ATTRIBUTES)?;
+    assert_ne!(identity(&replacement)?, reviewed);
+    assert_eq!(
+        identity(&open(&saved, false, FILE_READ_ATTRIBUTES)?)?,
+        reviewed
+    );
+    assert_eq!(
+        rename_probe(&replacement, &fixture.path().join("other"))
+            .unwrap_err()
+            .raw_os_error(),
+        Some(5)
+    );
+    assert_eq!(fs::read(&original)?, fs::read(&saved)?);
+    assert!(!fixture.path().join("other").try_exists()?);
+    Ok(())
+}
+
+#[test]
+fn case_variant_destination_on_default_ntfs_preserves_both_files() -> io::Result<()> {
+    let fixture = tempfile::tempdir()?;
+    let dir = open(fixture.path(), true, FILE_READ_ATTRIBUTES)?;
+    let mode = information!(dir, FileCaseSensitiveInfo, FILE_CASE_SENSITIVE_INFO);
+    let original = fixture.path().join("sample");
+    let occupied = fixture.path().join("occupied");
+    fs::write(&original, b"cache")?;
+    fs::write(&occupied, b"unrelated")?;
+    let held = open(&original, false, FILE_READ_ATTRIBUTES | DELETE)?;
+    if mode.Flags & 1 == 0 {
+        assert!(rename_probe(&held, &fixture.path().join("OCCUPIED")).is_err());
+    }
+    assert!(fs::rename(&original, fixture.path().join("SAMPLE")).is_err());
+    assert_eq!(fs::read(original)?, b"cache");
+    assert_eq!(fs::read(occupied)?, b"unrelated");
+    Ok(())
+}
