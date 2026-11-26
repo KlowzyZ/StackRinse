@@ -35,3 +35,5 @@ The integration test owns a separate operations.sqlite3 database inside the priv
 | restored, refused, interrupted, ambiguous | no further movement under that operation |
 
 Rename errors trigger verification of both slots. An intact source and empty destination yield failed or restore_failed; uncertain evidence yields ambiguous. A verified restore_failed item permits a fresh restore attempt. A failed completion commit also leaves the prior intent durable. A busy instance cannot safely acquire the journal writer role. Recovery evidence assumes fixture ownership continues across connection reopens. The tests model process interruption at commit boundaries, not media failure or full machine power loss. The fixture's synthetic file cannot match any directory-based discovery rule. A future real quarantine needs a scanner-enforced identity boundary that covers explicit scan roots, nested roots and aliases before storing any project data.
+
+The [Sprint 7 audit](recovery-audit.md) updates the qualification evidence, journal checks and process interruption results.

@@ -124,6 +124,20 @@ impl Store {
 mod tests {
     use super::*;
     #[test]
+    fn execution_settings_are_rejected() {
+        for key in [
+            "execute",
+            "experimentalCleanup",
+            "quarantine",
+            "restore",
+            "purge",
+            "permanentDeletion",
+        ] {
+            let input = serde_json::json!({(key):true});
+            assert!(serde_json::from_value::<Settings>(input).is_err(), "{key}");
+        }
+    }
+    #[test]
     fn storing_invalid_exclusions_preserves_the_existing_file() {
         let tmp = tempfile::tempdir().unwrap();
         let store = Store(tmp.path().to_path_buf());
