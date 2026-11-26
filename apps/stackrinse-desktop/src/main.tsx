@@ -497,6 +497,7 @@ function App() {
                           : "candidates"}
                       </span>
                     </div>
+                    <p className="prefHint">Quarantine would move verified items into local recovery storage. A same-volume move generally frees no disk space. Restoration would return an item only if its original location is available. Quarantine, restoration and permanent deletion are unavailable.</p>
                     <CandidateList candidates={plan.candidates}>
                       {(c) => (
                         <article className="candidate" key={c.path}>
