@@ -220,7 +220,7 @@ fn rejects_changed_folders_exclusions_protection_and_partial_inventories() {
         |_| {},
     )
     .unwrap();
-    assert_eq!(redundant_roots.scope.roots, [root.clone()]);
+    assert_eq!(redundant_roots.scope.roots, std::slice::from_ref(&root));
     let mut partial = redundant_roots.clone();
     partial.projects[0].candidates[0].size_complete = false;
     let saved = Snapshot::capture(&partial, timing(2)).unwrap();
@@ -343,6 +343,7 @@ fn exports_unicode_json_and_safe_csv_without_overwriting() {
     );
     assert!(value["summary"].get("scope_key").is_none());
     let content = fs::read_to_string(&csv).unwrap();
+    assert!(content.starts_with('\u{feff}'));
     assert!(content.contains("東京-café"));
     assert!(content.contains("\"' \u{feff}=HYPERLINK(\"\"example\"\")\r\n,ñ\","));
     assert!(content.contains("\"fresh_scan\""));

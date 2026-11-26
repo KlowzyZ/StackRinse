@@ -1287,11 +1287,39 @@ select,
   font-weight: 580;
   outline-offset: -4px;
 }
+.historyManage > summary,
+.inventoryExport > summary,
+.historyDisclosure > summary,
+.trendFigure summary {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  list-style: none;
+}
+.historyManage > summary::-webkit-details-marker,
+.inventoryExport > summary::-webkit-details-marker,
+.historyDisclosure > summary::-webkit-details-marker,
+.trendFigure summary::-webkit-details-marker { display: none; }
+.historyManage > summary::before,
+.inventoryExport > summary::before,
+.historyDisclosure > summary::before,
+.trendFigure summary::before {
+  content: "";
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border: solid var(--muted);
+  border-width: 1px 1px 0 0;
+  transform: rotate(45deg);
+  margin-inline: 1px 3px;
+}
+.historyManage[open] > summary::before,
+.inventoryExport[open] > summary::before,
+.historyDisclosure[open] > summary::before,
+.trendFigure details[open] summary::before { transform: translateY(-2px) rotate(135deg); }
 .historyManage summary > svg,
 .inventoryExport summary > svg {
-  display: inline-block;
-  vertical-align: text-bottom;
-  margin-inline: 4px 5px;
+  flex: none;
   color: var(--muted);
 }
 .historyManage > div, .inventoryExport > div { padding: 1px 20px 14px; }
@@ -1384,7 +1412,7 @@ select,
 .trendPoint { fill: var(--accent); }
 .trendSelected { fill: var(--surface); stroke: var(--accent); stroke-width: 2; vector-effect: non-scaling-stroke; }
 .trendFigure figcaption { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 6px; margin-top: 7px; }
-.trendFigure summary { text-align: center; cursor: pointer; color: var(--text); }
+.trendFigure summary { justify-content: center; cursor: pointer; color: var(--text); }
 .trendValues { border-collapse: collapse; margin: 8px auto 0; }
 .trendValues th, .trendValues td { padding: 4px 6px; border-bottom: 1px solid var(--line); text-align: start; }
 

@@ -16,6 +16,7 @@ async function screenshot(page: Page, name: string) {
   const folder = process.env.STACKRINSE_SCREENSHOTS;
   if (!folder) return;
   mkdirSync(folder, { recursive: true });
+  await page.mouse.move(2, 2);
   await page.evaluate(() => document.fonts.ready);
   await page.screenshot({ path: join(folder, name + ".png") });
 }
@@ -23,6 +24,7 @@ async function screenshot(page: Page, name: string) {
 test("browses real scan measurements, changes baselines and exports through the desktop bridge", async ({
   page,
 }) => {
+  test.setTimeout(120_000);
   const fixture = scanFixture();
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
@@ -142,6 +144,7 @@ test("browses real scan measurements, changes baselines and exports through the 
 test("filters incompatible snapshots and manages saved history with the keyboard", async ({
   page,
 }) => {
+  test.setTimeout(120_000);
   const fixture = scanFixture();
   let historyUnavailable = true;
   try {

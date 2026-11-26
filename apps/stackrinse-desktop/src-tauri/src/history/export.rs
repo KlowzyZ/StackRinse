@@ -138,7 +138,56 @@ fn csv_row(output: &mut impl Write, cells: [&str; 15]) -> io::Result<()> {
     output.write_all(b"\r\n")
 }
 
+#[derive(Default)]
+struct Row<'a> {
+    record: &'a str,
+    completed_at_ms: Option<i64>,
+    duration_ms: Option<u64>,
+    completeness: &'a str,
+    project_count: Option<usize>,
+    candidate_count: Option<usize>,
+    logical_bytes: Option<u64>,
+    reviewable_bytes: Option<u64>,
+    protected_bytes: Option<u64>,
+    path: &'a str,
+    ecosystem: &'a str,
+    category: &'a str,
+    message: &'a str,
+    source: &'a str,
+    project_details: &'a str,
+}
+
+impl Row<'_> {
+    fn write(self, output: &mut impl Write) -> io::Result<()> {
+        fn number(value: Option<impl ToString>) -> String {
+            value.map(|value| value.to_string()).unwrap_or_default()
+        }
+        csv_row(
+            output,
+            [
+                self.record,
+                &number(self.completed_at_ms),
+                &number(self.duration_ms),
+                self.completeness,
+                &number(self.project_count),
+                &number(self.candidate_count),
+                &number(self.logical_bytes),
+                &number(self.reviewable_bytes),
+                &number(self.protected_bytes),
+                self.path,
+                self.ecosystem,
+                self.category,
+                self.message,
+                self.source,
+                self.project_details,
+            ],
+        )
+    }
+}
+
 fn write_csv(output: &mut impl Write, source: Source, snapshot: &Snapshot) -> io::Result<()> {
+    // The UTF-8 marker helps spreadsheet programs recognize Unicode on open.
+    output.write_all(b"\xef\xbb\xbf")?;
     csv_row(
         output,
         [
@@ -161,156 +210,85 @@ fn write_csv(output: &mut impl Write, source: Source, snapshot: &Snapshot) -> io
     )?;
     let summary = &snapshot.summary;
     let inventory = &snapshot.inventory;
-    let origin = match source {
-        Source::Fresh => "fresh_scan",
-        Source::History { .. } => "saved_history",
-    };
-    csv_row(
-        output,
-        [
-            "scan",
-            &summary.completed_at_ms.to_string(),
-            &summary.duration_ms.to_string(),
-            if summary.complete {
-                "complete"
-            } else {
-                "incomplete"
-            },
-            &summary.project_count.to_string(),
-            &summary.candidate_count.to_string(),
-            &summary.totals.logical_bytes.to_string(),
-            &summary.totals.reviewable_bytes.to_string(),
-            &summary.totals.protected_bytes.to_string(),
-            "",
-            "",
-            "",
-            "",
-            origin,
-            if inventory.projects.is_some() {
-                "included"
-            } else {
-                "unavailable"
-            },
-        ],
-    )?;
+    Row {
+        record: "scan",
+        completed_at_ms: Some(summary.completed_at_ms),
+        duration_ms: Some(summary.duration_ms),
+        completeness: if summary.complete {
+            "complete"
+        } else {
+            "incomplete"
+        },
+        project_count: Some(summary.project_count),
+        candidate_count: Some(summary.candidate_count),
+        logical_bytes: Some(summary.totals.logical_bytes),
+        reviewable_bytes: Some(summary.totals.reviewable_bytes),
+        protected_bytes: Some(summary.totals.protected_bytes),
+        source: match source {
+            Source::Fresh => "fresh_scan",
+            Source::History { .. } => "saved_history",
+        },
+        project_details: if inventory.projects.is_some() {
+            "included"
+        } else {
+            "unavailable"
+        },
+        ..Row::default()
+    }
+    .write(output)?;
     for root in &inventory.roots {
-        csv_row(
-            output,
-            [
-                "root",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                &root.to_string_lossy(),
-                "",
-                "",
-                "",
-                "",
-                "",
-            ],
-        )?;
+        Row {
+            record: "root",
+            path: &root.to_string_lossy(),
+            ..Row::default()
+        }
+        .write(output)?;
     }
     for exclusion in &inventory.exclusions {
-        csv_row(
-            output,
-            [
-                "exclusion",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                &exclusion.to_string_lossy(),
-                "",
-                "",
-            ],
-        )?;
+        Row {
+            record: "exclusion",
+            message: &exclusion.to_string_lossy(),
+            ..Row::default()
+        }
+        .write(output)?;
     }
     for warning in &inventory.warnings {
-        csv_row(
-            output,
-            [
-                "warning", "", "", "", "", "", "", "", "", "", "", "", warning, "", "",
-            ],
-        )?;
+        Row {
+            record: "warning",
+            message: warning,
+            ..Row::default()
+        }
+        .write(output)?;
     }
     for (name, bytes) in &inventory.ecosystems {
-        csv_row(
-            output,
-            [
-                "ecosystem",
-                "",
-                "",
-                "",
-                "",
-                "",
-                &bytes.to_string(),
-                "",
-                "",
-                "",
-                name,
-                "",
-                "",
-                "",
-                "",
-            ],
-        )?;
+        Row {
+            record: "ecosystem",
+            ecosystem: name,
+            logical_bytes: Some(*bytes),
+            ..Row::default()
+        }
+        .write(output)?;
     }
     for (name, bytes) in &inventory.categories {
-        csv_row(
-            output,
-            [
-                "category",
-                "",
-                "",
-                "",
-                "",
-                "",
-                &bytes.to_string(),
-                "",
-                "",
-                "",
-                "",
-                name,
-                "",
-                "",
-                "",
-            ],
-        )?;
+        Row {
+            record: "category",
+            category: name,
+            logical_bytes: Some(*bytes),
+            ..Row::default()
+        }
+        .write(output)?;
     }
     if let Some(projects) = &inventory.projects {
         for project in projects {
-            csv_row(
-                output,
-                [
-                    "project",
-                    "",
-                    "",
-                    "",
-                    "",
-                    &project.candidate_count.to_string(),
-                    &project.logical_bytes.to_string(),
-                    "",
-                    "",
-                    &project.path.to_string_lossy(),
-                    &project.ecosystems.join(" | "),
-                    "",
-                    "",
-                    "",
-                    "",
-                ],
-            )?;
+            Row {
+                record: "project",
+                candidate_count: Some(project.candidate_count),
+                logical_bytes: Some(project.logical_bytes),
+                path: &project.path.to_string_lossy(),
+                ecosystem: &project.ecosystems.join(" | "),
+                ..Row::default()
+            }
+            .write(output)?;
         }
     }
     Ok(())

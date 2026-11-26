@@ -64,7 +64,7 @@ export function SavedOverview({
           {before
             ? signedBytes(
                 latest.totals.logical_bytes - before.totals.logical_bytes,
-              ) + " since prior comparable scan"
+              ) + " logical change since prior comparable scan"
             : "Observed logical size"}
         </span>
       </div>
