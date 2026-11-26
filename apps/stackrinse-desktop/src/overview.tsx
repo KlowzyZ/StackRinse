@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
+import { ExportControl } from "./export-control";
 import {
   ArrowRight,
   Box,
@@ -144,12 +145,16 @@ export function Overview({
   open,
   explore,
   lastScan,
+  busy,
+  savedScan,
 }: {
   report: Report | null;
   roots: number;
   open: (p: Project) => void;
   explore: () => void;
   lastScan: string;
+  busy: boolean;
+  savedScan: ReactNode;
 }) {
   const data = useMemo(() => {
     const projects = report?.projects || [],
@@ -193,7 +198,7 @@ export function Overview({
         <header className="sectionHead">
           <div>
             <ScanLine />
-            Storage map
+            {report ? "Current session inventory" : "Storage map"}
           </div>
           <span className="mono muted">Logical file size</span>
         </header>
@@ -259,7 +264,9 @@ export function Overview({
             {roots} scan {roots === 1 ? "root" : "roots"}
           </span>
         </footer>
+        {report && !report.cancelled && <ExportControl key={report.completedAtMs} source={{ kind: "fresh" }} disabled={busy} />}
       </section>
+      {savedScan}
       {!!report?.warnings.length && (
         <details className="panel issues">
           <summary>

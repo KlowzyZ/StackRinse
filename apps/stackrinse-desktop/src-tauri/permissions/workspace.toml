@@ -1,6 +1,6 @@
 [[permission]]
 identifier = "workspace-inventory"
-description = "Choose local scan folders, manage preferences, inventory artifacts, and preview a plan."
+description = "Manage the local inventory, scan history, dry-run previews, and exports through a native save dialog."
 commands.allow = [
     "get_settings",
     "choose_root",
@@ -10,4 +10,11 @@ commands.allow = [
     "scan",
     "cancel_scan",
     "dry_run",
+    "history_list",
+    "history_detail",
+    "history_compare",
+    "history_remove",
+    "history_clear",
+    "history_set_retention",
+    "export_inventory",
 ]

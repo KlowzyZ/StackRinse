@@ -1,4 +1,6 @@
-use crate::{policy, rules, Candidate, Classification, Progress, Project, Report, ScanOptions};
+use crate::{
+    policy, rules, Candidate, Classification, Progress, Project, Report, ScanOptions, ScanScope,
+};
 use rayon::prelude::*;
 use std::{
     fs, io,
@@ -187,15 +189,22 @@ fn measure(
                 read_error = Some(message.clone());
                 (Classification::Protected, message)
             }
-            Ok(None) => (
-                Classification::Protected,
-                "Artifact evidence changed during the scan.".into(),
-            ),
+            Ok(None) => {
+                read_error = Some(format!(
+                    "{}: artifact evidence changed during the scan.",
+                    path.display()
+                ));
+                (
+                    Classification::Protected,
+                    "Artifact evidence changed during the scan.".into(),
+                )
+            }
         },
     };
     (
         Candidate {
             path: path.into(),
+            ecosystem: rule.ecosystem,
             category: rule.category.into(),
             logical_bytes: bytes,
             size_complete,
@@ -248,7 +257,11 @@ pub fn scan(
     if roots.is_empty() {
         return Err(ScanError::NoRoots);
     }
-    let options = normalize_options(options)?;
+    let mut options = normalize_options(options)?;
+    options.exclusions.sort();
+    options.exclusions.dedup();
+    options.protected_projects.sort();
+    options.protected_projects.dedup();
     let mut roots = roots
         .iter()
         .map(|r| normalize_root(r))
@@ -264,7 +277,14 @@ pub fn scan(
         .num_threads(std::thread::available_parallelism().map_or(1, |n| n.get().min(4)))
         .build()
         .map_err(|e| ScanError::Workers(e.to_string()))?;
-    let mut report = Report::default();
+    let mut report = Report {
+        scope: ScanScope {
+            roots: unique.clone(),
+            exclusions: options.exclusions.clone(),
+            protected_projects: options.protected_projects.clone(),
+        },
+        ..Report::default()
+    };
     let mut last = None::<Instant>;
     for root in unique {
         if stopped(cancel) {

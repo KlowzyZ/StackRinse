@@ -60,6 +60,10 @@ The overview and CLI separate total, reviewable and protected logical bytes. JSO
 
 A partial inventory counts only the file lengths the scanner observed. A protected candidate can show zero observed bytes when its contents were skipped. Protected candidates are excluded from dry-run totals. Project protection preferences can be removed in Settings. Git and filesystem boundaries still apply on the next scan.
 
+The desktop **History** screen keeps finished scans on this device, including scans with incomplete inventories. Trends and comparisons use complete inventories with matching roots, exclusions, protection and discovery rules. A project move or rename can show up as a newly observed path and a path no longer observed. The Overview labels the current session inventory and the latest saved scan separately.
+
+Use **History settings** to change retention or clear saved scans. **Export inventory** opens a native Save dialog for a JSON or CSV report from the current session or a saved scan. Reports may contain local filesystem paths, so review them before sharing.
+
 See the [filesystem safety model](docs/safety.md), [architecture](docs/architecture.md) and [roadmap](docs/roadmap.md).
 
 ## Development
