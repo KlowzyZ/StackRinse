@@ -16,7 +16,7 @@ The scanner already recognized the following project-local layouts.
 | Maven | `pom.xml` | Marked `target` output |
 | Gradle | `build.gradle` or `build.gradle.kts` | `build` with classes or generated outputs |
 
-The scanner works from regular project manifests and tool evidence. It reads only selected roots and skips filesystem links, reparse points, exclusions, special files and protected system paths. On Unix it also checks volume boundaries. The Git index, repository boundaries, protection preferences and incomplete measurements can block dry-run review.
+The scanner works from regular project manifests and tool evidence. Inventory traversal stays within selected roots and skips filesystem links, reparse points, exclusions, special files and protected system paths. The scanner inspects enclosing paths for links and Git boundaries. On Unix it also checks volume boundaries. The Git index, repository boundaries, protection preferences and incomplete measurements can block dry-run review.
 
 ## Sprint 5 additions
 
