@@ -63,12 +63,14 @@ jobs:
         working-directory: apps/stackrinse-desktop
         run: npm run test:e2e
 
-      - name: Exercise the embedded Linux webview and native dry run
+      - name: Exercise the embedded Linux webview, scan history, and native dry run
         if: runner.os == 'Linux'
         run: xvfb-run -a dbus-run-session -- python3 apps/stackrinse-desktop/e2e/native_linux.py target/debug/stackrinse-desktop "$RUNNER_TEMP/native-overview.png"
       - uses: actions/upload-artifact@v4
         if: runner.os == 'Linux'
         with:
           name: linux-native-overview
-          path: ${{ runner.temp }}/native-overview.png
+          path: |
+            ${{ runner.temp }}/native-overview.png
+            ${{ runner.temp }}/native-history.png
           retention-days: 7

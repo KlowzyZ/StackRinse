@@ -13,6 +13,8 @@ stackrinse-core = { path = "../../../crates/stackrinse-core" }
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
 fs2 = "0.4"
+rusqlite = { version = "0.43", features = ["bundled", "limits"] }
+sha2 = "0.10"
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tempfile = "3"

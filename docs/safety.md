@@ -18,6 +18,8 @@ Protection has two sources. Users can protect a project and its descendants thro
 
 An incomplete candidate contributes observed bytes to inventory and is excluded from the plan. Expected skips at policy boundaries can produce partial sizes without an operating-system error. An enumeration or metadata error inside a candidate also produces a scan warning. Cancellation makes the whole report ineligible for planning.
 
+Saved scans can be browsed, compared and exported. Dry-run review uses the native application's in-memory scan session and current protection rules. Clearing history removes local database records. Workspace files and previously exported reports are unaffected. Saved and exported reports can contain local root and project paths or paths in warnings. Keep exports private when those paths are sensitive.
+
 Git index verification has a 15-second per-process deadline. A failed or timed-out check protects the candidate. Cancellation also stops an outstanding Git check. A stalled filesystem call can still delay completion.
 
 ## Requirements for enabling writes

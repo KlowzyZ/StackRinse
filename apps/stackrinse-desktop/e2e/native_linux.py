@@ -1,4 +1,4 @@
-"""Linux WebKitGTK smoke test for the built Tauri application."""
+"""Linux WebKitGTK smoke test for embedded inventory, history and dry-run review."""
 import argparse
 import base64
 import json
@@ -53,15 +53,34 @@ def smoke(binary, screenshot):
         settings = config / "dev.klowzy.stackrinse" / "settings.json"
         settings.parent.mkdir(parents=True)
         settings.write_text(json.dumps({"roots": [str(root)]}))
-        env = dict(os.environ, XDG_CONFIG_HOME=str(config), TAURI_WEBVIEW_AUTOMATION="true")
+        env = dict(os.environ, XDG_CONFIG_HOME=str(config), XDG_DATA_HOME=str(Path(tmp) / "data"),
+                   TAURI_WEBVIEW_AUTOMATION="true")
         driver = subprocess.Popen(["WebKitWebDriver", "--host=127.0.0.1", "--port=4444"], env=env)
         try:
             wait_for(driver_ready, "WebKitWebDriver did not become ready")
             capabilities = {"webkitgtk:browserOptions": {"binary": str(binary.resolve())}}
-            session = webdriver("POST", "/session", {"capabilities": {"alwaysMatch": capabilities}})
-            endpoint = "/session/" + session["sessionId"]
+            def open_session():
+                session = webdriver("POST", "/session", {"capabilities": {"alwaysMatch": capabilities}})
+                return "/session/" + session["sessionId"]
+
+            endpoint = open_session()
+
             def js(script):
                 return webdriver("POST", endpoint + "/execute/sync", {"script": script, "args": []})
+
+            def command(command, arguments, expect_error=False):
+                script = """
+                    const [command, args, done] = arguments;
+                    window.__TAURI_INTERNALS__.invoke(command, args)
+                        .then(result => done({result}), error => done({error: String(error)}));
+                """
+                response = webdriver("POST", endpoint + "/execute/async", {
+                    "script": script, "args": [command, arguments],
+                })
+                if expect_error:
+                    return response["error"]
+                assert "error" not in response, response
+                return response.get("result")
 
             try:
                 wait_for(lambda: js('return !!document.querySelector("button.primary:enabled")'),
@@ -82,19 +101,47 @@ def smoke(binary, screenshot):
                          "Removing a preview entry did not clear the selection")
                 assert marker.read_bytes() == b"{}"
                 assert js('return document.querySelector(".reviewFoot button:last-child").disabled')
+
+                assert len(command("history_list", {})["entries"]) == 1
+                (output / "compiled").write_bytes(b"A" * 1048576)
+                assert command("scan", {})["totals"]["logical_bytes"] == 1048578
+                (output / "compiled").write_bytes(b"A" * 524288)
+                assert command("scan", {})["totals"]["logical_bytes"] == 524290
+                entries = command("history_list", {})["entries"]
+                assert len(entries) == 3 and all(entry["complete"] for entry in entries)
+                result = command("history_compare", {"beforeId": entries[1]["id"], "afterId": entries[0]["id"]})
+                assert result["logical_bytes_delta"] == -524288
+                js('document.querySelector(\'nav button[title="History"]\').click()')
+                wait_for(lambda: js('return document.body.innerText.includes("3 comparable scans")'),
+                         "Native storage trend did not render")
+                wait_for(lambda: js('return document.querySelector(".comparisonTotal strong")?.textContent === "−512 KiB"'),
+                         "Native comparison did not render")
+                screenshot.with_name("native-history.png").write_bytes(
+                    base64.b64decode(webdriver("GET", endpoint + "/screenshot")))
+
                 # Keep settings and selection identical, then make the replacement scan fail.
-                root.rename(root.with_name("moved"))
-                def command_error(command, arguments):
-                    script = """
-                        const [command, args, done] = arguments;
-                        window.__TAURI_INTERNALS__.invoke(command, args)
-                            .then(() => done(null), error => done(String(error)));
-                    """
-                    return webdriver("POST", endpoint + "/execute/async", {
-                        "script": script, "args": [command, arguments],
-                    })
-                assert "Cannot scan" in command_error("scan", {})
-                assert "Scan a folder first" in command_error("dry_run", {"paths": [str(output)]})
+                moved = root.rename(root.with_name("moved"))
+                assert "Cannot scan" in command("scan", {}, expect_error=True)
+                assert "Scan a folder first" in command("dry_run", {"paths": [str(output)]}, expect_error=True)
+                moved.rename(root)
+                assert len(command("history_list", {})["entries"]) == 3
+                command("history_set_retention", {"count": 10})
+            finally:
+                webdriver("DELETE", endpoint)
+
+            endpoint = open_session()
+            try:
+                wait_for(lambda: js('return document.body.innerText.includes("Latest saved scan")'),
+                         "Saved history did not appear after restarting the native application")
+                assert js('return document.body.innerText.includes("Awaiting first scan")')
+                history = command("history_list", {})
+                assert history["retention"] == 10 and len(history["entries"]) == 3
+                assert "Scan a folder first" in command("dry_run", {"paths": [str(output)]}, expect_error=True)
+                command("history_remove", {"id": history["entries"][0]["id"]})
+                assert len(command("history_list", {})["entries"]) == 2
+                command("history_clear", {})
+                assert not command("history_list", {})["entries"]
+                assert marker.read_bytes() == b"{}"
             finally:
                 webdriver("DELETE", endpoint)
         finally:

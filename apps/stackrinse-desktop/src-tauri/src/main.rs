@@ -1,7 +1,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod history;
 mod settings;
 
+use history::{export, Comparison, Detail, HistoryIndex, HistoryStore, ScanTiming, Snapshot};
 use settings::{Appearance, Result, Settings, Store};
 use stackrinse_core::{Plan, Report, ScanOptions};
 use std::{
@@ -11,16 +13,29 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex, MutexGuard,
     },
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
-type Slot = Arc<Mutex<Option<Arc<AtomicBool>>>>;
+struct ActiveScan {
+    cancelled: Arc<AtomicBool>,
+    accepting_cancel: bool,
+}
+
+type Slot = Arc<Mutex<Option<ActiveScan>>>;
+
+#[derive(Clone)]
+struct FreshScan {
+    settings: Settings,
+    report: Arc<Report>,
+    timing: ScanTiming,
+}
+
 #[derive(Default)]
 struct Session {
     scan: Slot,
-    last_scan: Mutex<Option<(Settings, Arc<Report>)>>,
+    last_scan: Mutex<Option<FreshScan>>,
 }
 
 fn lock<T>(value: &Mutex<T>) -> Result<MutexGuard<'_, T>> {
@@ -104,7 +119,7 @@ fn set_project_protection(
     if protected
         && !lock(&session.last_scan)?
             .as_ref()
-            .is_some_and(|(_, report)| report.projects.iter().any(|p| p.path == path))
+            .is_some_and(|scan| scan.report.projects.iter().any(|p| p.path == path))
     {
         return Err("Select a project from the latest scan.".into());
     }
@@ -121,8 +136,18 @@ struct ScanProgress {
     visited: u64,
 }
 
+#[derive(serde::Serialize)]
+struct ScanOutcome {
+    #[serde(flatten)]
+    report: Arc<Report>,
+    #[serde(rename = "historyNotice")]
+    history_notice: Option<String>,
+    #[serde(rename = "completedAtMs")]
+    completed_at_ms: i64,
+}
+
 #[tauri::command]
-async fn scan(app: AppHandle, session: State<'_, Session>) -> Result<Arc<Report>> {
+async fn scan(app: AppHandle, session: State<'_, Session>) -> Result<ScanOutcome> {
     let cancelled = Arc::new(AtomicBool::new(false));
     {
         let mut slot = lock(&session.scan)?;
@@ -131,7 +156,10 @@ async fn scan(app: AppHandle, session: State<'_, Session>) -> Result<Arc<Report>
         }
         // A replacement scan invalidates the previous preview, including on failure.
         *lock(&session.last_scan)? = None;
-        *slot = Some(cancelled.clone());
+        *slot = Some(ActiveScan {
+            cancelled: cancelled.clone(),
+            accepting_cancel: true,
+        });
     }
     let lease = ScanLease(session.scan.clone());
     let settings = get_settings(app.clone())?;
@@ -139,7 +167,9 @@ async fn scan(app: AppHandle, session: State<'_, Session>) -> Result<Arc<Report>
         return Err("Choose a scan folder first.".into());
     }
     let scan_settings = settings.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || {
+    let scan_slot = session.scan.clone();
+    let (result, timing, history_notice) = tauri::async_runtime::spawn_blocking(move || {
+        let started = Instant::now();
         let options = ScanOptions {
             exclusions: settings
                 .excluded_names
@@ -149,7 +179,7 @@ async fn scan(app: AppHandle, session: State<'_, Session>) -> Result<Arc<Report>
             protected_projects: settings.protected_projects,
         };
         let last_event = Mutex::new(None::<Instant>);
-        stackrinse_core::scan(&settings.roots, &options, &cancelled, |progress| {
+        let mut report = stackrinse_core::scan(&settings.roots, &options, &cancelled, |progress| {
             let Ok(mut last) = last_event.lock() else {
                 return;
             };
@@ -164,20 +194,56 @@ async fn scan(app: AppHandle, session: State<'_, Session>) -> Result<Arc<Report>
                 );
             }
         })
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+        {
+            let mut slot = lock(&scan_slot)?;
+            if let Some(active) = slot.as_mut() {
+                active.accepting_cancel = false;
+            }
+            report.cancelled |= cancelled.load(Ordering::Relaxed);
+        }
+        let timing = ScanTiming {
+            completed_at_ms: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as i64,
+            duration_ms: started.elapsed().as_millis() as u64,
+        };
+        let history_notice = if report.cancelled {
+            None
+        } else {
+            Snapshot::capture(&report, timing)
+                .and_then(|snapshot| history_store(&app)?.record(snapshot))
+                .err()
+                .map(|error| format!("This scan could not be saved to history. {error}"))
+        };
+        Ok::<_, String>((report, timing, history_notice))
     })
     .await
     .map_err(|e| e.to_string())??;
     let result = Arc::new(result);
-    *lock(&session.last_scan)? = Some((scan_settings, result.clone()));
+    if !result.cancelled {
+        *lock(&session.last_scan)? = Some(FreshScan {
+            settings: scan_settings,
+            report: result.clone(),
+            timing,
+        });
+    }
     drop(lease);
-    Ok(result)
+    Ok(ScanOutcome {
+        report: result,
+        history_notice,
+        completed_at_ms: timing.completed_at_ms,
+    })
 }
 
 #[tauri::command]
 fn cancel_scan(session: State<'_, Session>) -> Result<bool> {
-    if let Some(flag) = lock(&session.scan)?.as_ref() {
-        flag.store(true, Ordering::Relaxed);
+    if let Some(active) = lock(&session.scan)?
+        .as_ref()
+        .filter(|scan| scan.accepting_cancel)
+    {
+        active.cancelled.store(true, Ordering::Relaxed);
         return Ok(true);
     }
     Ok(false)
@@ -186,10 +252,99 @@ fn cancel_scan(session: State<'_, Session>) -> Result<bool> {
 #[tauri::command]
 async fn dry_run(app: AppHandle, session: State<'_, Session>, paths: Vec<PathBuf>) -> Result<Plan> {
     let current = get_settings(app)?;
-    let (previous, report) = lock(&session.last_scan)?
+    let scan = lock(&session.last_scan)?
         .clone()
         .ok_or("Scan a folder first.")?;
-    selected_plan(&previous, &current, &report, paths)
+    selected_plan(&scan.settings, &current, &scan.report, paths)
+}
+
+fn history_store(app: &AppHandle) -> Result<HistoryStore> {
+    app.path()
+        .app_local_data_dir()
+        .map(HistoryStore)
+        .map_err(|error| error.to_string())
+}
+
+async fn history_call<T: Send + 'static>(
+    app: AppHandle,
+    action: impl FnOnce(HistoryStore) -> Result<T> + Send + 'static,
+) -> Result<T> {
+    tauri::async_runtime::spawn_blocking(move || action(history_store(&app)?))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn history_list(app: AppHandle) -> Result<HistoryIndex> {
+    history_call(app, |store| store.list()).await
+}
+
+#[tauri::command]
+async fn history_detail(app: AppHandle, id: i64) -> Result<Detail> {
+    history_call(app, move |store| store.detail(id)).await
+}
+
+#[tauri::command]
+async fn history_compare(app: AppHandle, before_id: i64, after_id: i64) -> Result<Comparison> {
+    history_call(app, move |store| store.compare(before_id, after_id)).await
+}
+
+#[tauri::command]
+async fn history_remove(app: AppHandle, id: i64) -> Result<()> {
+    history_call(app, move |store| store.remove(id)).await
+}
+
+#[tauri::command]
+async fn history_clear(app: AppHandle) -> Result<()> {
+    history_call(app, |store| store.clear()).await
+}
+
+#[tauri::command]
+async fn history_set_retention(app: AppHandle, count: u32) -> Result<()> {
+    history_call(app, move |store| store.set_retention(count)).await
+}
+
+#[tauri::command]
+async fn export_inventory(
+    app: AppHandle,
+    session: State<'_, Session>,
+    source: export::Source,
+    format: export::Format,
+) -> Result<bool> {
+    let fresh = if let export::Source::Fresh = source {
+        Some(
+            lock(&session.last_scan)?
+                .clone()
+                .ok_or("Run a fresh scan to export its inventory.")?,
+        )
+    } else {
+        None
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        let snapshot = match source {
+            export::Source::Fresh => {
+                let scan = fresh.ok_or("Run a fresh scan to export its inventory.")?;
+                Snapshot::capture(&scan.report, scan.timing)?
+            }
+            export::Source::History { id } => history_store(&app)?.get(id)?,
+        };
+        let extension = format.extension();
+        let Some(selected) = app
+            .dialog()
+            .file()
+            .set_title("Export inventory · May contain local paths")
+            .set_file_name(format!("stackrinse-inventory.{extension}"))
+            .add_filter(format!("{} report", extension.to_uppercase()), &[extension])
+            .blocking_save_file()
+        else {
+            return Ok(false);
+        };
+        let path = selected.into_path().map_err(|error| error.to_string())?;
+        export::save(&path, format, source, &snapshot)?;
+        Ok(true)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 fn selected_plan(
@@ -223,7 +378,14 @@ fn main() {
             set_project_protection,
             scan,
             cancel_scan,
-            dry_run
+            dry_run,
+            history_list,
+            history_detail,
+            history_compare,
+            history_remove,
+            history_clear,
+            history_set_retention,
+            export_inventory
         ])
         .run(tauri::generate_context!())
         .expect("StackRinse could not start its desktop window");

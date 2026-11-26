@@ -78,6 +78,7 @@ export function scanFixture(prepare?: (root: string) => void) {
       root,
       report,
       plan,
+      rescan: (): Report => cli(["scan"]),
       dispose: () => rmSync(root, { recursive: true, force: true }),
     };
   } catch (error) {

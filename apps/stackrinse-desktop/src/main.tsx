@@ -29,6 +29,8 @@ import "./style.css";
 import { Overview } from "./overview";
 import { Explorer, ProjectDetails } from "./projects";
 import { Preferences } from "./preferences";
+import { History as ScanHistory, SavedOverview } from "./history";
+import { useHistoryIndex } from "./history-api";
 import { Empty, RiskLabel } from "./shared";
 import {
   basename,
@@ -52,7 +54,7 @@ const titles: Record<Screen, string> = {
   Overview: "Storage overview",
   Projects: "Project explorer",
   "Cleanup review": "Cleanup review",
-  History: "Operation history",
+  History: "Scan history",
   Settings: "Workspace settings",
   "Project details": "Project details",
 };
@@ -60,12 +62,13 @@ const subtitles: Partial<Record<Screen, string>> = {
   Overview: "Understand the build artifacts in your workspace.",
   Projects: "Explore projects, artifact sizes, and rebuild costs.",
   "Cleanup review": "Inspect the exact paths included in your dry run.",
-  History: "Results of completed filesystem operations.",
+  History: "Browse local snapshots and compare observed artifact sizes.",
   Settings: "Choose what StackRinse scans and how it appears.",
 };
 const native = "__TAURI_INTERNALS__" in window;
 
 function App() {
+  const history = useHistoryIndex(native);
   const [screen, setScreen] = useState<Screen>("Overview"),
     [detail, setDetail] = useState<Project | null>(null);
   const [settings, setSettings] = useState<Settings>(initialSettings),
@@ -77,6 +80,7 @@ function App() {
     [cancelling, setCancelling] = useState(false),
     [visited, setVisited] = useState(0);
   const [error, setError] = useState(""),
+    [historyNotice, setHistoryNotice] = useState(""),
     [saving, setSaving] = useState(false),
     [selected, setSelected] = useState<Set<string>>(new Set()),
     [plan, setPlan] = useState<Plan | null>(null);
@@ -135,6 +139,7 @@ function App() {
   };
   const navigate = (s: Screen) => {
     setScreen(s);
+    if (s === "History") void history.reload();
     requestAnimationFrame(() => {
       heading.current?.focus();
       document.querySelector("main")?.scrollTo(0, 0);
@@ -147,6 +152,7 @@ function App() {
   const clearInventory = () => {
     setReport(null);
     setLastScan("");
+    setHistoryNotice("");
     setSelected(new Set());
     setPlan(null);
     setDetail(null);
@@ -194,17 +200,20 @@ function App() {
       }
       setPlan(null);
       setSelected(new Set());
+      setHistoryNotice("");
       setScanPhase("scanning");
       const result = await invoke<Report>("scan");
       setReport(result);
+      setHistoryNotice(result.historyNotice || "");
       setLastScan(
-        new Date().toLocaleTimeString(undefined, {
+        new Date(result.completedAtMs ?? Date.now()).toLocaleTimeString(undefined, {
           hour: "2-digit",
           minute: "2-digit",
         }),
       );
       setDetail(null);
       navigate("Overview");
+      if (!result.cancelled) void history.reload();
     } catch (e) {
       clearInventory();
       setError(String(e));
@@ -401,6 +410,13 @@ function App() {
                 <span>{visited.toLocaleString()} directories visited</span>
               </div>
             )}
+            {historyNotice && !scanning && screen === "Overview" && (
+              <div className="alert" role="status">
+                <CircleAlert size={16} />
+                <span>{historyNotice}</span>
+                <button aria-label="Dismiss history notice" onClick={() => setHistoryNotice("")}><X size={14} /></button>
+              </div>
+            )}
             {report?.cancelled && !scanning && (
               <div className="alert" role="status">
                 <CircleAlert size={16} />
@@ -408,13 +424,17 @@ function App() {
               </div>
             )}
             {screen === "Overview" && (
-              <Overview
-                report={report}
-                roots={settings.roots.length}
-                open={open}
-                explore={() => navigate("Projects")}
-                lastScan={lastScan}
-              />
+                <Overview
+                  report={report}
+                  roots={settings.roots.length}
+                  open={open}
+                  explore={() => navigate("Projects")}
+                  lastScan={lastScan}
+                  busy={busy}
+                  savedScan={history.index && !history.error ? (
+                    <SavedOverview entries={history.index.entries} open={() => navigate("History")} />
+                  ) : null}
+                />
             )}
             {(screen === "Projects" || screen === "Project details") && (
               <div hidden={screen !== "Projects"}>
@@ -538,18 +558,7 @@ function App() {
               </section>
             )}
             {screen === "History" && (
-              <section className="panel">
-                <header className="sectionHead">
-                  <div>
-                    <History />
-                    Operation log
-                  </div>
-                </header>
-                <Empty Icon={History} title="No cleanup operations">
-                  This read-only build previews plans. No files have been moved
-                  or removed.
-                </Empty>
-              </section>
+              <ScanHistory {...history} native={native} busy={busy} openOverview={() => navigate("Overview")} />
             )}
             {screen === "Settings" && (
               <Preferences

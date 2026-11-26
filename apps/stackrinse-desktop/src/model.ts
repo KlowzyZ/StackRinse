@@ -29,6 +29,8 @@ export interface Report {
   warnings: string[];
   cancelled: boolean;
   directories: number;
+  completedAtMs?: number;
+  historyNotice?: string | null;
 }
 export interface Settings {
   roots: string[];

@@ -14,6 +14,14 @@ pub struct ScanOptions {
     pub protected_projects: Vec<PathBuf>,
 }
 
+/// Effective inputs after the scanner has resolved paths and collapsed nested roots.
+#[derive(Default, Debug, Clone, Serialize)]
+pub struct ScanScope {
+    pub roots: Vec<PathBuf>,
+    pub exclusions: Vec<PathBuf>,
+    pub protected_projects: Vec<PathBuf>,
+}
+
 #[derive(Clone, Copy, Debug, Serialize)]
 pub struct Progress {
     pub directories: u64,
@@ -40,6 +48,8 @@ pub enum Cost {
 #[derive(Clone, Debug, Serialize)]
 pub struct Candidate {
     pub path: PathBuf,
+    #[serde(skip_serializing)]
+    pub ecosystem: &'static str,
     pub category: String,
     pub logical_bytes: u64,
     /// False when policy boundaries or read errors skipped entries.
@@ -67,13 +77,14 @@ pub struct Project {
 
 #[derive(Default, Clone, Debug)]
 pub struct Report {
+    pub scope: ScanScope,
     pub projects: Vec<Project>,
     pub warnings: Vec<String>,
     pub cancelled: bool,
     pub directories: u64,
 }
 
-#[derive(Default, Debug, Serialize)]
+#[derive(Default, Clone, Debug, serde::Deserialize, Serialize)]
 pub struct InventoryTotals {
     pub logical_bytes: u64,
     pub reviewable_bytes: u64,
@@ -87,6 +98,17 @@ fn protected(project: &Project, candidate: &Candidate) -> bool {
 }
 
 impl Report {
+    pub fn inventory_complete(&self) -> bool {
+        !self.cancelled
+            && self.warnings.is_empty()
+            && self.projects.iter().all(|project| {
+                project
+                    .candidates
+                    .iter()
+                    .all(|candidate| candidate.size_complete)
+            })
+    }
+
     /// Computed from the current view, including after CLI size filtering.
     pub fn totals(&self) -> InventoryTotals {
         let mut totals = InventoryTotals::default();
