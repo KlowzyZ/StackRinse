@@ -13,6 +13,7 @@ use std::{
         unix::fs::{MetadataExt, OpenOptionsExt},
     },
     path::{Path, PathBuf},
+    sync::atomic::{AtomicBool, Ordering},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tempfile::TempDir;
@@ -48,6 +49,7 @@ struct Fixture {
     root: TempDir,
     generation: i64,
     protected: bool,
+    cancelled: AtomicBool,
 }
 
 struct Plan {
@@ -95,6 +97,7 @@ impl Fixture {
             root,
             generation: 0,
             protected: false,
+            cancelled: AtomicBool::new(false),
         };
         let db = Connection::open(f.root.path().join("operations.sqlite3"))?;
         db.execute_batch("PRAGMA synchronous=FULL;")?;
@@ -128,6 +131,10 @@ impl Fixture {
         ])
     }
     fn policy(&self) -> Result<()> {
+        require(
+            !self.cancelled.load(Ordering::Acquire),
+            "inventory cancelled",
+        )?;
         require(!self.protected, "protection enabled")?;
         for dir in self.root.path().ancestors() {
             match fs::symlink_metadata(dir.join(".git")) {
@@ -200,7 +207,7 @@ impl Fixture {
         let checked = (|| {
             let unresolved: bool = db.query_row(
                 "SELECT EXISTS(SELECT 1 FROM event e WHERE op<>? AND seq=(SELECT max(seq) FROM event WHERE op=e.op)
-                    AND state NOT IN ('refused','restored','interrupted'))", [&op], |r| r.get(0))?;
+                    AND state NOT IN ('refused','restored','interrupted','failed'))", [&op], |r| r.get(0))?;
             require(!unresolved, "previous operation needs recovery")?;
             require(
                 plan.generation == self.generation && plan.issued.elapsed() < TTL,
@@ -232,10 +239,7 @@ impl Fixture {
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )?;
         require(id(&dirs[0])? == a && id(&dirs[1])? == b, "parent replaced")?;
-        require(
-            dirs[0].metadata()?.dev() == dirs[1].metadata()?.dev(),
-            "cross-volume",
-        )?;
+        same_volume(&dirs)?;
         let mut slots = [false; 2];
         for (i, dir) in dirs.iter().enumerate() {
             if let Some(file) = inspect(dir)? {
@@ -251,7 +255,7 @@ impl Fixture {
         let state = state(&db, op)?;
         if !matches!(
             state.as_str(),
-            "quarantined" | "restore_refused" | "restore_interrupted"
+            "quarantined" | "restore_refused" | "restore_failed" | "restore_interrupted"
         ) {
             event(&db, op, &state, "restore refused in this state")?;
             return Err("restore refused in this state".into());
@@ -308,16 +312,12 @@ impl Fixture {
         };
         if rc != 0 {
             let err = io::Error::last_os_error();
-            event(
-                db,
-                op,
-                if restore {
-                    "restore_intent"
-                } else {
-                    "move_intent"
-                },
-                &err.to_string(),
-            )?;
+            let state = match self.validate(db, op, restore) {
+                Ok(_) if restore => "restore_failed",
+                Ok(_) => "failed",
+                Err(_) => "ambiguous",
+            };
+            event(db, op, state, &err.to_string())?;
             return Err(err.into());
         }
         if stop == Stop::AfterMove {
@@ -349,6 +349,16 @@ impl Fixture {
             "movement incomplete",
         )
     }
+    fn pending(&self) -> Result<Vec<String>> {
+        let db = self.db()?;
+        check_schema(&db)?;
+        let mut statement = db.prepare(
+            "SELECT op FROM event e WHERE seq=(SELECT max(seq) FROM event WHERE op=e.op)
+            AND state IN ('authorized','move_intent','restore_intent') ORDER BY seq",
+        )?;
+        let rows = statement.query_map([], |r| r.get(0))?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
     fn reconcile(&self, op: &str) -> Result<()> {
         let _guard = self.lock()?;
         let db = self.db()?;
@@ -359,6 +369,13 @@ impl Fixture {
             _ => Ok(()),
         }
     }
+}
+
+fn same_volume(dirs: &[File; 2]) -> Result<()> {
+    require(
+        dirs[0].metadata()?.dev() == dirs[1].metadata()?.dev(),
+        "cross-volume",
+    )
 }
 
 fn inspect(dir: &File) -> Result<Option<File>> {
@@ -430,9 +447,9 @@ fn durable_intents_reconcile_in_both_directions() -> Result<()> {
                 assert!(f.execute(plan.approve(), stop).is_err());
             }
             let db = f.db()?;
-            let pending:String=db.query_row("SELECT op FROM event WHERE state IN ('move_intent','restore_intent') AND seq=(SELECT MAX(seq) FROM event)",[],|r|r.get(0))?;
-            assert_eq!(pending, op);
-            assert_eq!(f.reconcile(&pending).is_ok(), stop == Stop::AfterMove);
+            let pending = f.pending()?;
+            assert_eq!(pending.as_slice(), std::slice::from_ref(&op));
+            assert_eq!(f.reconcile(&pending[0]).is_ok(), stop == Stop::AfterMove);
             let expected = match (restore, stop) {
                 (true, Stop::AfterIntent) => "restore_interrupted",
                 (false, Stop::AfterIntent) => "interrupted",
@@ -464,6 +481,7 @@ fn authorization_refuses_changed_evidence() -> Result<()> {
         "repository",
         "worktree",
         "protected",
+        "cancelled",
         "generation",
         "expired",
         "collision",
@@ -494,6 +512,7 @@ fn authorization_refuses_changed_evidence() -> Result<()> {
             "repository" => fs::create_dir(src.join(".git"))?,
             "worktree" => fs::write(src.join(".git"), b"gitdir: elsewhere")?,
             "protected" => f.protected = true,
+            "cancelled" => f.cancelled.store(true, Ordering::Release),
             "generation" => {
                 f.scan()?;
             }
@@ -586,5 +605,83 @@ fn incomplete_inventory_invalidates_prior_approval_and_unsettled_intent_blocks_n
     assert!(f.reconcile(&pending).is_err());
     let p = f.scan()?;
     f.execute(p.approve(), Stop::Never)?;
+    Ok(())
+}
+
+#[test]
+fn failed_completion_write_recovers_from_observed_location() -> Result<()> {
+    let mut f = Fixture::new()?;
+    let p = f.scan()?;
+    let op = p.operation.to_string();
+    f.db()?.execute_batch("CREATE TRIGGER fail BEFORE INSERT ON event WHEN NEW.state='quarantined' BEGIN SELECT RAISE(ABORT,'completion failure'); END;")?;
+    assert!(f.execute(p.approve(), Stop::Never).is_err());
+    assert_eq!(f.pending()?.as_slice(), std::slice::from_ref(&op));
+    assert_eq!(
+        fs::read(f.root.path().join("vault/fixture.cache"))?,
+        CONTENT
+    );
+    f.db()?.execute_batch("DROP TRIGGER fail")?;
+    f.reconcile(&op)?;
+    f.restore(&op, Stop::Never)?;
+    assert_eq!(
+        fs::read(f.root.path().join("source/fixture.cache"))?,
+        CONTENT
+    );
+    Ok(())
+}
+
+#[test]
+fn permission_failure_preserves_original() -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    // A privileged test process can bypass directory mode restrictions.
+    if unsafe { libc::geteuid() } == 0 {
+        return Ok(());
+    }
+    let mut f = Fixture::new()?;
+    let p = f.scan()?;
+    let op = p.operation.to_string();
+    let vault = f.root.path().join("vault");
+    fs::set_permissions(&vault, fs::Permissions::from_mode(0o500))?;
+    let result = f.execute(p.approve(), Stop::Never);
+    fs::set_permissions(&vault, fs::Permissions::from_mode(0o700))?;
+    assert!(result.is_err());
+    assert_eq!(state(&f.db()?, &op)?, "failed");
+    assert_eq!(
+        fs::read(f.root.path().join("source/fixture.cache"))?,
+        CONTENT
+    );
+    Ok(())
+}
+
+#[test]
+fn separate_tmpfs_is_ineligible_where_available() -> Result<()> {
+    if !Path::new("/dev/shm").is_dir() {
+        return Ok(());
+    }
+    let f = Fixture::new()?;
+    let other = tempfile::tempdir_in("/dev/shm")?;
+    let dirs = [directory(f.root.path())?, directory(other.path())?];
+    if dirs[0].metadata()?.dev() != dirs[1].metadata()?.dev() {
+        assert!(same_volume(&dirs).is_err());
+    }
+    Ok(())
+}
+
+#[test]
+fn unavailable_or_replaced_restore_parent_preserves_quarantine() -> Result<()> {
+    let mut f = Fixture::new()?;
+    let p = f.scan()?;
+    let op = p.operation.to_string();
+    f.execute(p.approve(), Stop::Never)?;
+    let source = f.root.path().join("source");
+    fs::rename(&source, f.root.path().join("moved"))?;
+    assert!(f.restore(&op, Stop::Never).is_err());
+    fs::create_dir(&source)?;
+    assert!(f.restore(&op, Stop::Never).is_err());
+    assert_eq!(
+        fs::read(f.root.path().join("vault/fixture.cache"))?,
+        CONTENT
+    );
+    assert!(!source.join("fixture.cache").try_exists()?);
     Ok(())
 }
