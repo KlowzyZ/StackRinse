@@ -29,3 +29,9 @@ To regenerate individual PNG files, run this from `apps/stackrinse-desktop` afte
 ```sh
 STACKRINSE_CAPTURE=/tmp/stackrinse-screenshots npm run test:e2e -- sprint-capture
 ```
+
+## Verification notes
+
+Computed primary-button color contrast is 8.56:1 in dark mode and 7.07:1 in light mode. Secondary text on the main panel surface is above 7:1 in both themes. These measurements cover the specified color pairs.
+
+The Linux warm-cache CLI benchmark compared the two revisions with 240 synthetic projects and 50 generated files per project. The JSON inventories matched. Median scan-process times over 15 runs per revision were 55.4 ms before and 50.2 ms after on this host. Scanner code was identical, and the timings describe this run only.

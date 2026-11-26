@@ -1046,6 +1046,13 @@ select,
   .distribution {
     grid-template-columns: minmax(110px, 1fr) minmax(110px, 1fr);
   }
+  .metrics {
+    gap: 6px;
+    font-size: 11px;
+  }
+  .metrics dt svg {
+    display: none;
+  }
 }
 @media (max-width: 735px) {
   .filters {
@@ -1583,7 +1590,6 @@ select,
 @media (max-width: 520px) {
   .reviewFoot { flex-wrap: wrap; }
   .legend button b { font-size: 10px; }
-  .metrics dt svg { display: none; }
 }
 .comparisonSizes {
   display: flex;
