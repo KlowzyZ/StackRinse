@@ -125,8 +125,18 @@ fn relative_protection_and_exclusion_resolve_from_current_directory() {
 #[test]
 fn recovery_is_unavailable_at_production_entry_points() {
     let root = fixture();
-    for verb in ["quarantine", "restore", "purge"] {
+    for verb in ["quarantine", "restore", "purge", "delete"] {
         assert_eq!(run(verb, root.path(), &[]).status.code(), Some(2));
+    }
+    for flag in [
+        "--execute",
+        "--experimental",
+        "--purge",
+        "--permanent",
+        "--restore",
+        "--quarantine",
+    ] {
+        assert_eq!(run("clean", root.path(), &[flag]).status.code(), Some(2));
     }
     let host = include_str!("../../../apps/stackrinse-desktop/src-tauri/src/main.rs");
     let (_, registration) = host.split_once("tauri::generate_handler![").unwrap();

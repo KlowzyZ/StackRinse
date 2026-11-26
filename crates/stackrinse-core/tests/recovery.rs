@@ -45,8 +45,8 @@ fn directory(path: &Path) -> io::Result<File> {
         .open(path)
 }
 
-struct Fixture {
-    root: TempDir,
+struct Fixture<R = TempDir> {
+    root: R,
     generation: i64,
     protected: bool,
     cancelled: AtomicBool,
@@ -79,6 +79,27 @@ enum Stop {
     Never,
     AfterIntent,
     AfterMove,
+    KillAt(Boundary),
+}
+
+#[derive(PartialEq, Clone, Copy, Debug)]
+enum Boundary {
+    BeforeIntent,
+    AfterIntent,
+    AfterMove,
+    AfterSync,
+}
+
+impl Stop {
+    fn checkpoint(self, point: Boundary) {
+        if self == Self::KillAt(point) {
+            // Deliver an uncatchable signal while the instance lock and DB are live.
+            unsafe {
+                libc::raise(libc::SIGKILL);
+            }
+            unreachable!("SIGKILL returned");
+        }
+    }
 }
 
 impl Fixture {
@@ -111,23 +132,27 @@ impl Fixture {
         directory(f.root.path())?.sync_all()?;
         Ok(f)
     }
+}
+
+impl<R: AsRef<Path>> Fixture<R> {
     fn db(&self) -> Result<Connection> {
         let db = Connection::open_with_flags(
-            self.root.path().join("operations.sqlite3"),
+            self.root.as_ref().join("operations.sqlite3"),
             rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE,
         )?;
         db.execute_batch("PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON;")?;
+        validate_journal(&db, self.root.as_ref())?;
         Ok(db)
     }
     fn lock(&self) -> Result<File> {
-        let lock = File::open(self.root.path().join("instance.lock"))?;
+        let lock = File::open(self.root.as_ref().join("instance.lock"))?;
         lock.try_lock_exclusive()?;
         Ok(lock)
     }
     fn dirs(&self) -> Result<[File; 2]> {
         Ok([
-            directory(&self.root.path().join("source"))?,
-            directory(&self.root.path().join("vault"))?,
+            directory(&self.root.as_ref().join("source"))?,
+            directory(&self.root.as_ref().join("vault"))?,
         ])
     }
     fn policy(&self) -> Result<()> {
@@ -136,7 +161,7 @@ impl Fixture {
             "inventory cancelled",
         )?;
         require(!self.protected, "protection enabled")?;
-        for dir in self.root.path().ancestors() {
+        for dir in self.root.as_ref().ancestors() {
             match fs::symlink_metadata(dir.join(".git")) {
                 Err(e) if e.kind() == io::ErrorKind::NotFound => (),
                 Err(e) => return Err(e.into()),
@@ -144,7 +169,7 @@ impl Fixture {
             }
         }
         for location in ["source", "vault"] {
-            for entry in fs::read_dir(self.root.path().join(location))? {
+            for entry in fs::read_dir(self.root.as_ref().join(location))? {
                 require(
                     entry?.file_name() == "fixture.cache",
                     "unrecognized entry or repository",
@@ -167,7 +192,7 @@ impl Fixture {
             operation: Uuid::new_v4(),
             issued,
             created_ms: SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis(),
-            original: self.root.path().join("source/fixture.cache"),
+            original: self.root.as_ref().join("source/fixture.cache"),
             object,
             parents: [id(&dirs[0])?, id(&dirs[1])?],
         })
@@ -190,7 +215,7 @@ impl Fixture {
                 TTL.as_millis() as i64,
                 plan.original.to_str().ok_or("path encoding")?,
                 self.root
-                    .path()
+                    .as_ref()
                     .join("vault/fixture.cache")
                     .to_str()
                     .ok_or("path encoding")?,
@@ -286,6 +311,7 @@ impl Fixture {
                 return Err(e);
             }
         };
+        stop.checkpoint(Boundary::BeforeIntent);
         event(
             db,
             op,
@@ -296,6 +322,7 @@ impl Fixture {
             },
             "validated both slots",
         )?;
+        stop.checkpoint(Boundary::AfterIntent);
         if stop == Stop::AfterIntent {
             return Err("simulated interruption".into());
         }
@@ -320,12 +347,13 @@ impl Fixture {
             event(db, op, state, &err.to_string())?;
             return Err(err.into());
         }
+        stop.checkpoint(Boundary::AfterMove);
         if stop == Stop::AfterMove {
             return Err("simulated interruption".into());
         }
-        self.finish(db, op, restore)
+        self.finish(db, op, restore, stop)
     }
-    fn finish(&self, db: &Connection, op: &str, restore: bool) -> Result<()> {
+    fn finish(&self, db: &Connection, op: &str, restore: bool, stop: Stop) -> Result<()> {
         let (dirs, slots) = match self.observe(db, op) {
             Ok(pair) => pair,
             Err(e) => {
@@ -336,6 +364,7 @@ impl Fixture {
         for dir in dirs {
             dir.sync_all()?;
         }
+        stop.checkpoint(Boundary::AfterSync);
         let next = match (restore, slots) {
             (false, [false, true]) => "quarantined",
             (true, [true, false]) => "restored",
@@ -363,9 +392,15 @@ impl Fixture {
         let _guard = self.lock()?;
         let db = self.db()?;
         match state(&db, op)?.as_str() {
-            "authorized" => event(&db, op, "interrupted", "no durable move intent"),
-            "move_intent" => self.finish(&db, op, false),
-            "restore_intent" => self.finish(&db, op, true),
+            "authorized" => match self.validate(&db, op, false) {
+                Ok(_) => event(&db, op, "interrupted", "verified source before intent"),
+                Err(e) => {
+                    event(&db, op, "ambiguous", &e.to_string())?;
+                    Err(e)
+                }
+            },
+            "move_intent" => self.finish(&db, op, false, Stop::Never),
+            "restore_intent" => self.finish(&db, op, true, Stop::Never),
             _ => Ok(()),
         }
     }
@@ -416,6 +451,77 @@ fn check_schema(db: &Connection) -> Result<()> {
         db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))? == 1,
         "unsupported journal",
     )
+}
+// Deliberately validate the complete fixture journal before interpreting a latest event.
+// The journal is private and bounded in these experiments. This is not authentication.
+fn validate_journal(db: &Connection, root: &Path) -> Result<()> {
+    check_schema(db)?;
+    let integrity: String = db.query_row("PRAGMA integrity_check", [], |r| r.get(0))?;
+    require(integrity == "ok", "journal integrity check failed")?;
+    require(
+        !db.prepare("PRAGMA foreign_key_check")?.exists([])?,
+        "orphan event",
+    )?;
+    let invalid: bool = db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM item WHERE
+        original<>? OR destination<>? OR bytes<>? OR plan_version<>1 OR rule<>? OR generation<1
+        OR ttl_ms<>? OR NOT EXISTS(SELECT 1 FROM event WHERE event.op=item.op))",
+        params![
+            root.join("source/fixture.cache")
+                .to_str()
+                .ok_or("path encoding")?,
+            root.join("vault/fixture.cache")
+                .to_str()
+                .ok_or("path encoding")?,
+            CONTENT.len() as i64,
+            RULE,
+            TTL.as_millis() as i64
+        ],
+        |r| r.get(0),
+    )?;
+    require(!invalid, "inconsistent item")?;
+    let mut stmt = db.prepare("SELECT op,state,detail FROM event ORDER BY op,seq")?;
+    let mut rows = stmt.query([])?;
+    let mut previous_op = String::new();
+    let mut previous = String::new();
+    while let Some(row) = rows.next()? {
+        let op: String = row.get(0)?;
+        let next: String = row.get(1)?;
+        let detail: String = row.get(2)?;
+        if op != previous_op {
+            previous.clear();
+            previous_op = op;
+        }
+        let valid = matches!(
+            (previous.as_str(), next.as_str()),
+            ("", "authorized")
+                | (
+                    "authorized",
+                    "refused" | "interrupted" | "move_intent" | "ambiguous"
+                )
+                | (
+                    "move_intent",
+                    "failed" | "quarantined" | "ambiguous" | "interrupted"
+                )
+                | (
+                    "quarantined" | "restore_refused" | "restore_failed" | "restore_interrupted",
+                    "restore_intent" | "restore_refused"
+                )
+                | (
+                    "restore_intent",
+                    "restored" | "restore_failed" | "ambiguous" | "restore_interrupted"
+                )
+        );
+        require(
+            valid
+                || (!previous.is_empty()
+                    && previous == next
+                    && detail == "restore refused in this state"),
+            "invalid event sequence",
+        )?;
+        previous = next;
+    }
+    Ok(())
 }
 fn event(db: &Connection, op: &str, state: &str, detail: &str) -> Result<()> {
     db.execute(
@@ -683,5 +789,202 @@ fn unavailable_or_replaced_restore_parent_preserves_quarantine() -> Result<()> {
         CONTENT
     );
     assert!(!source.join("fixture.cache").try_exists()?);
+    Ok(())
+}
+
+#[test]
+fn crash_worker() -> Result<()> {
+    let Ok(mode) = std::env::var("STACKRINSE_TEST_CRASH_POINT") else {
+        return Ok(());
+    };
+    let mut f = Fixture::new()?;
+    let p = f.scan()?;
+    let op = p.operation.to_string();
+    let (direction, point) = mode.split_once('/').ok_or("invalid fault point")?;
+    let stop = Stop::KillAt(match point {
+        "before-intent" => Boundary::BeforeIntent,
+        "after-intent" => Boundary::AfterIntent,
+        "after-move" => Boundary::AfterMove,
+        "after-sync" => Boundary::AfterSync,
+        _ => return Err("unknown checkpoint".into()),
+    });
+    if direction == "restore" {
+        f.execute(p.approve(), Stop::Never)?;
+        f.restore(&op, stop)?;
+    } else {
+        f.execute(p.approve(), stop)?;
+    }
+    Err("fault injection did not terminate worker".into())
+}
+
+#[test]
+fn fresh_process_recovers_after_sigkill() -> Result<()> {
+    use std::os::unix::process::ExitStatusExt;
+    for direction in ["move", "restore"] {
+        for point in ["before-intent", "after-intent", "after-move", "after-sync"] {
+            let parent = tempfile::tempdir()?;
+            let output = std::process::Command::new(std::env::current_exe()?)
+                .args(["--exact", "crash_worker"])
+                .env("TMPDIR", parent.path())
+                .env(
+                    "STACKRINSE_TEST_CRASH_POINT",
+                    format!("{direction}/{point}"),
+                )
+                .output()?;
+            assert_eq!(output.status.signal(), Some(libc::SIGKILL), "{output:?}");
+            let mut entries = fs::read_dir(parent.path())?;
+            let root = entries.next().ok_or("worker fixture missing")??.path();
+            assert!(entries.next().is_none());
+            let f = Fixture {
+                root,
+                generation: 0,
+                protected: false,
+                cancelled: AtomicBool::new(false),
+            };
+            let db = f.db()?;
+            let (op, object): (String, String) =
+                db.query_row("SELECT op,identity FROM item", [], |r| {
+                    Ok((r.get(0)?, r.get(1)?))
+                })?;
+            let expected = match (direction, point) {
+                ("move", "before-intent" | "after-intent") => "interrupted",
+                ("move", _) => "quarantined",
+                ("restore", "before-intent") => "quarantined",
+                ("restore", "after-intent") => "restore_interrupted",
+                _ => "restored",
+            };
+            let pending = f.pending()?;
+            assert_eq!(
+                pending.len(),
+                usize::from(!(direction == "restore" && point == "before-intent"))
+            );
+            for pending_op in pending {
+                let _outcome = f.reconcile(&pending_op);
+            }
+            assert_eq!(state(&db, &op)?, expected);
+            let dirs = f.dirs()?;
+            let original = matches!(expected, "interrupted" | "restored");
+            let item = inspect(&dirs[usize::from(!original)])?.ok_or("expected bytes missing")?;
+            assert_eq!(id(&item)?, object);
+            assert!(inspect(&dirs[usize::from(original)])?.is_none());
+            assert!(f.pending()?.is_empty());
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn malformed_journals_never_authorize_restore() -> Result<()> {
+    for damage in [
+        "PRAGMA user_version=99",
+        "DELETE FROM event",
+        "UPDATE event SET state='restored' WHERE state='move_intent'",
+        "INSERT INTO event(op,state,detail) SELECT op,'quarantined','duplicate' FROM item",
+        "UPDATE item SET original='somewhere else'",
+        "PRAGMA foreign_keys=OFF; DELETE FROM item",
+    ] {
+        let mut f = Fixture::new()?;
+        let p = f.scan()?;
+        let op = p.operation.to_string();
+        f.execute(p.approve(), Stop::Never)?;
+        f.db()?.execute_batch(damage)?;
+        assert!(f.pending().is_err(), "{damage}");
+        assert!(f.restore(&op, Stop::Never).is_err(), "{damage}");
+        assert_eq!(
+            fs::read(f.root.path().join("vault/fixture.cache"))?,
+            CONTENT
+        );
+        assert!(!f.root.path().join("source/fixture.cache").try_exists()?);
+    }
+    Ok(())
+}
+
+// Design probe for a stable, private mount namespace. A held vault descriptor pins
+// its inode. Every explicit root and every descended directory would need this check.
+fn within_vault(mut current: File, vault: &File) -> Result<bool> {
+    let reserved = id(vault)?;
+    for _ in 0..1024 {
+        let here = id(&current)?;
+        if here == reserved {
+            return Ok(true);
+        }
+        // SAFETY: live directory fd and static C string. Keep the new fd owned.
+        let fd = unsafe {
+            libc::openat(
+                current.as_raw_fd(),
+                c"..".as_ptr(),
+                libc::O_DIRECTORY | libc::O_RDONLY | libc::O_CLOEXEC,
+            )
+        };
+        if fd < 0 {
+            return Err(io::Error::last_os_error().into());
+        }
+        use std::os::fd::FromRawFd;
+        let parent = unsafe { File::from_raw_fd(fd) };
+        if id(&parent)? == here {
+            return Ok(false);
+        }
+        current = parent;
+    }
+    Err("unverified ancestry".into())
+}
+
+#[test]
+fn vault_boundary_follows_live_identity_across_names() -> Result<()> {
+    let f = Fixture::new()?;
+    let vault = f.root.path().join("vault");
+    let pinned = directory(&vault)?;
+    fs::create_dir(vault.join("nested"))?;
+    let renamed = f.root.path().join("VAULT");
+    fs::rename(&vault, &renamed)?;
+    fs::create_dir(&vault)?;
+    let alias = f.root.path().join("alias");
+    std::os::unix::fs::symlink(&renamed, &alias)?;
+    for root in [&renamed, &renamed.join("nested"), &alias.join("nested")] {
+        assert!(within_vault(directory(root)?, &pinned)?);
+    }
+    assert!(!within_vault(directory(&vault)?, &pinned)?);
+    assert!(directory(&alias).is_err());
+    Ok(())
+}
+
+#[test]
+fn corrupt_database_leaves_quarantine_intact() -> Result<()> {
+    use std::io::Write;
+    let mut f = Fixture::new()?;
+    let p = f.scan()?;
+    let op = p.operation.to_string();
+    f.execute(p.approve(), Stop::Never)?;
+    OpenOptions::new()
+        .write(true)
+        .open(f.root.path().join("operations.sqlite3"))?
+        .write_all(b"invalid database")?;
+    assert!(f.restore(&op, Stop::Never).is_err());
+    assert!(f.pending().is_err());
+    assert_eq!(
+        fs::read(f.root.path().join("vault/fixture.cache"))?,
+        CONTENT
+    );
+    Ok(())
+}
+
+#[test]
+fn pre_intent_reconciliation_checks_actual_slots() -> Result<()> {
+    let mut f = Fixture::new()?;
+    let p = f.scan()?;
+    let op = p.operation.to_string();
+    f.db()?.execute_batch("CREATE TRIGGER fail BEFORE INSERT ON event WHEN NEW.state='move_intent' BEGIN SELECT RAISE(ABORT,'intent failure'); END;")?;
+    assert!(f.execute(p.approve(), Stop::Never).is_err());
+    fs::write(f.root.path().join("vault/fixture.cache"), b"unexpected")?;
+    assert!(f.reconcile(&op).is_err());
+    assert_eq!(state(&f.db()?, &op)?, "ambiguous");
+    assert_eq!(
+        fs::read(f.root.path().join("vault/fixture.cache"))?,
+        b"unexpected"
+    );
+    assert_eq!(
+        fs::read(f.root.path().join("source/fixture.cache"))?,
+        CONTENT
+    );
     Ok(())
 }
