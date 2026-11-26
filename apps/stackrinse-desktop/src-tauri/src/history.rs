@@ -365,6 +365,14 @@ impl HistoryStore {
         }
         directory.create(&self.0).map_err(|e| e.to_string())?;
         let path = self.file();
+        #[cfg(unix)]
+        // System paths such as macOS /var may be aliases. Resolve only the
+        // trusted app directory, preserving the database's no-follow check.
+        let path = self
+            .0
+            .canonicalize()
+            .map_err(|e| e.to_string())?
+            .join(path.file_name().expect("the history file has a fixed name"));
         match file_options.open(&path) {
             Ok(_) => {}
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}

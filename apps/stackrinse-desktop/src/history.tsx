@@ -742,6 +742,16 @@ export function History({
   const doingUpdate = useRef(false);
   const timelineTitle = useRef<HTMLHeadingElement>(null);
   const confirmationTrigger = useRef<HTMLButtonElement>(null);
+  const focusAfterDialog = useRef<"trigger" | "timeline" | null>(null);
+  useEffect(() => {
+    if (confirmation || !focusAfterDialog.current) return;
+    const trigger =
+      focusAfterDialog.current === "trigger"
+        ? confirmationTrigger.current
+        : null;
+    focusAfterDialog.current = null;
+    (trigger?.isConnected ? trigger : timelineTitle.current)?.focus();
+  }, [confirmation]);
   const entries = index?.entries;
   const filtered = useMemo(() => {
     const term = query.trim().toLocaleLowerCase();
@@ -769,8 +779,8 @@ export function History({
     setConfirmation(target);
   }
   function cancelRemoval() {
+    focusAfterDialog.current = "trigger";
     setConfirmation(null);
-    requestAnimationFrame(() => confirmationTrigger.current?.focus());
   }
   async function change(
     command: string,
@@ -785,16 +795,14 @@ export function History({
     try {
       await invoke(command, args);
       await reload();
-      const wasRemoval = !!confirmation;
-      setConfirmation(null);
       setMessage(success);
-      if (wasRemoval)
-        requestAnimationFrame(() => timelineTitle.current?.focus());
     } catch (error) {
-      setConfirmation(null);
       setUpdateError(String(error));
-      requestAnimationFrame(() => timelineTitle.current?.focus());
     } finally {
+      if (confirmation) {
+        focusAfterDialog.current = "timeline";
+        setConfirmation(null);
+      }
       doingUpdate.current = false;
       setSaving(false);
     }

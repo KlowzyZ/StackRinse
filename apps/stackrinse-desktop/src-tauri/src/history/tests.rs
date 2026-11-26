@@ -85,7 +85,11 @@ fn unreadable_database_and_malformed_records_are_preserved_and_reported() {
 fn database_is_private_and_existing_links_are_refused() {
     use std::os::unix::fs::{symlink, PermissionsExt};
     let dir = tempfile::tempdir().unwrap();
-    let store = HistoryStore(dir.path().join("app"));
+    let app = dir.path().join("app");
+    let alias = dir.path().join("alias");
+    fs::create_dir(&app).unwrap();
+    symlink(&app, &alias).unwrap();
+    let store = HistoryStore(alias);
     store.record(empty_snapshot(1)).unwrap();
     let path = store.file();
     assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o077, 0);
