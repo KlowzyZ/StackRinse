@@ -129,7 +129,7 @@ function StorageTrend({
               {signedBytes(
                 last.totals.logical_bytes - first.totals.logical_bytes,
               )}{" "}
-              across this range
+              across these scans
             </p>
           </div>
           <figure className="trendFigure">
@@ -281,12 +281,12 @@ function ChangedProjects({
   );
 }
 
-function ScanComparison({ after, before }: { after: number; before: number }) {
+function ScanComparison({ after, before }: { after: HistoryEntry; before: HistoryEntry }) {
   const [result, setResult] = useState<Comparison | null>(null);
   const [error, setError] = useState("");
   useEffect(() => {
     let live = true;
-    invoke<Comparison>("history_compare", { beforeId: before, afterId: after })
+    invoke<Comparison>("history_compare", { beforeId: before.id, afterId: after.id })
       .then((comparison) => {
         if (live) setResult(comparison);
       })
@@ -296,7 +296,7 @@ function ScanComparison({ after, before }: { after: number; before: number }) {
     return () => {
       live = false;
     };
-  }, [after, before]);
+  }, [after.id, before.id]);
   if (error)
     return (
       <p className="historyHint historyError" role="alert">
@@ -316,10 +316,10 @@ function ScanComparison({ after, before }: { after: number; before: number }) {
           <span className="eyelabel">Logical size change</span>
           <strong>{signedBytes(result.logical_bytes_delta)}</strong>
         </div>
-        <p>
-          Differences describe observed artifacts. Filesystem allocation can
-          differ.
-        </p>
+        <dl className="comparisonSizes">
+          <div><dt>Baseline</dt><dd>{bytes(before.totals.logical_bytes)}</dd></div>
+          <div><dt>Selected scan</dt><dd>{bytes(after.totals.logical_bytes)}</dd></div>
+        </dl>
       </div>
       {result.growth && result.discovered && result.no_longer_observed ? (
         <details className="historyDisclosure" open>
@@ -400,8 +400,8 @@ function ComparePanel({
           </label>
           <ScanComparison
             key={baseline.id}
-            before={baseline.id}
-            after={entry.id}
+            before={baseline}
+            after={entry}
           />
         </>
       ) : (

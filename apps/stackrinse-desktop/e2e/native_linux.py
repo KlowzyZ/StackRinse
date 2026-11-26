@@ -100,7 +100,8 @@ def smoke(binary, screenshot):
                 wait_for(lambda: js('return document.body.innerText.includes("Your review is empty")'),
                          "Removing a preview entry did not clear the selection")
                 assert marker.read_bytes() == b"{}"
-                assert js('return document.querySelector(".reviewFoot button:last-child").disabled')
+                assert js('return document.querySelector(".reviewFoot .reviewUnavailable")?.textContent.includes("Cleanup unavailable")')
+                assert js('return document.querySelectorAll(".reviewFoot button").length') == 1
 
                 assert len(command("history_list", {})["entries"]) == 1
                 markers = (Path(__file__).resolve().parents[3] /

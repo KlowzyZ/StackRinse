@@ -29,7 +29,7 @@ export function Explorer({
 }: {
   projects: Project[];
   scanned: boolean;
-  open: (p: Project) => void;
+  open: (p: Project, button?: HTMLButtonElement) => void;
 }) {
   const [query, setQuery] = useState(""),
     [tech, setTech] = useState(""),
@@ -269,7 +269,7 @@ export function ProjectDetails({
                 </span>
               </div>
               <p>{c.reason}</p>
-              {c.classification === "protected" && c.evidence && (
+              {c.evidence && !c.reason.includes(c.evidence) && (
                 <p>
                   <b>Observed evidence</b> {c.evidence}
                 </p>
@@ -282,7 +282,10 @@ export function ProjectDetails({
                 <button
                   aria-pressed={selected.has(c.path)}
                   disabled={
-                    locked || protectedNow || c.classification === "protected"
+                    locked ||
+                    protectedNow ||
+                    !c.size_complete ||
+                    c.classification === "protected"
                   }
                   onClick={() => toggle(c.path)}
                 >

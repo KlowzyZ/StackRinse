@@ -52,7 +52,9 @@ export function ExportControl({
             Save CSV…
           </button>
         </div>
-        {message && <p role="status">{message}</p>}
+        <p role="status" hidden={!busy && !message}>
+          {busy ? "Waiting for the save dialog…" : message}
+        </p>
         {error && (
           <p role="alert" className="historyError">
             {error}

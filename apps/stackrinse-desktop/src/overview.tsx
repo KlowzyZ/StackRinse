@@ -9,6 +9,9 @@ import {
   Layers3,
   LockKeyhole,
   ScanLine,
+  Package,
+  Hammer,
+  Database,
   ShieldCheck,
 } from "lucide-react";
 import {
@@ -25,11 +28,9 @@ type Breakdown = "category" | "ecosystem";
 
 function Distribution({
   entries,
-  scanned,
   breakdown,
 }: {
   entries: [string, number][];
-  scanned: boolean;
   breakdown: Breakdown;
 }) {
   const [active, setActive] = useState<string | null>(null);
@@ -42,11 +43,9 @@ function Distribution({
       : share > 0 && share < 1
         ? "<1%"
         : Math.round(share) + "%";
-  const dialValue = !scanned
-    ? "—"
-    : !selected
-      ? entries.length
-      : (shareLabel ?? bytes(selected[1]));
+  const dialValue = selected
+    ? (shareLabel ?? bytes(selected[1]))
+    : entries.length;
   const dialUnit = !selected
     ? entries.length === 1
       ? breakdown
@@ -72,23 +71,10 @@ function Distribution({
                 : ", " +
                   (shareLabel === "<1%" ? "less than 1%" : shareLabel) +
                   " of inventory")
-            : scanned
-              ? "Artifact " + breakdown + " distribution in logical bytes"
-              : "Storage map awaiting scan"
+            : "Artifact " + breakdown + " distribution in logical bytes"
         }
       >
         <svg viewBox="0 0 200 200" aria-hidden="true">
-          {Array.from({ length: 72 }, (_, i) => (
-            <line
-              key={i}
-              x1="100"
-              y1={i % 6 ? 9 : 6}
-              x2="100"
-              y2="13"
-              transform={"rotate(" + i * 5 + " 100 100)"}
-              className={i % 6 ? "minorTick" : "majorTick"}
-            />
-          ))}
           <circle cx="100" cy="100" r="77" className="ringBase" />
           {entries.map(([name, n], i) => {
             const length = total ? (n / total) * 100 : 0;
@@ -111,7 +97,6 @@ function Distribution({
               />
             );
           })}
-          <circle cx="100" cy="100" r="61" className="guide" />
         </svg>
         <div className="dialCenter">
           <Layers3 size={20} />
@@ -146,11 +131,7 @@ function Distribution({
             </button>
           ))
         ) : (
-          <p>
-            {scanned
-              ? "No artifacts measured."
-              : "Sizes appear after a workspace scan."}
-          </p>
+          <p>No artifacts measured.</p>
         )}
       </div>
     </div>
@@ -159,6 +140,8 @@ function Distribution({
 export function Overview({
   report,
   roots,
+  scanning,
+  scanAction,
   open,
   explore,
   lastScan,
@@ -167,6 +150,8 @@ export function Overview({
 }: {
   report: Report | null;
   roots: number;
+  scanning: boolean;
+  scanAction: ReactNode;
   open: (p: Project) => void;
   explore: () => void;
   lastScan: string;
@@ -219,60 +204,117 @@ export function Overview({
   }, [report]);
   const partial =
     data.partialSize || !!report?.cancelled || !!report?.warnings.length;
+  if (!report) {
+    return (
+      <>
+        <section className="panel scanIntro" aria-labelledby="scan-intro-title">
+          <div className="introMain">
+            <div className="introIcon">
+              <FolderOpen size={25} aria-hidden="true" />
+            </div>
+            <h2 id="scan-intro-title">
+              {scanning
+                ? "Discovering your projects"
+                : "Clean builds. Keep code."}
+            </h2>
+            <p>
+              {scanning
+                ? "Your inventory will appear here when the scan finishes."
+                : "Choose a workspace folder to see where dependencies, build outputs, and development caches are taking up space."}
+            </p>
+            {!scanning && scanAction}
+            <span className="introStatus">
+              {scanning ? "Scan in progress" : "Awaiting first scan"}
+            </span>
+          </div>
+          <div className="introScope">
+            <h3>What a scan looks for</h3>
+            <ul>
+              <li>
+                <Package size={17} aria-hidden="true" />
+                <span>Dependencies</span>
+                <code>node_modules</code>
+              </li>
+              <li>
+                <Hammer size={17} aria-hidden="true" />
+                <span>Build outputs</span>
+                <code>target</code>
+              </li>
+              <li>
+                <Database size={17} aria-hidden="true" />
+                <span>Development caches</span>
+                <code>.godot</code>
+              </li>
+            </ul>
+            <p>
+              <ShieldCheck size={17} aria-hidden="true" />
+              <span>
+                Scans run locally in the folders you choose. Cleanup review is a
+                read-only preview.
+              </span>
+            </p>
+          </div>
+        </section>
+        {savedScan}
+      </>
+    );
+  }
+  const { logical_bytes, reviewable_bytes, protected_bytes } = report.totals;
+  const other = Math.max(0, logical_bytes - reviewable_bytes - protected_bytes);
   return (
     <>
       <section className="instrument">
         <header className="sectionHead">
           <div>
             <ScanLine />
-            {report ? "Current session inventory" : "Storage map"}
+            Current session inventory
           </div>
           <div className="breakdownControls">
-            <span className="mono muted">Logical file size</span>
-            {report && (
-              <select
-                aria-label="Group storage map"
-                value={breakdown}
-                onChange={(event) =>
-                  setBreakdown(
-                    event.target.value === "ecosystem"
-                      ? "ecosystem"
-                      : "category",
-                  )
-                }
-              >
-                <option value="category">By artifact type</option>
-                <option value="ecosystem">By ecosystem</option>
-              </select>
-            )}
+            <select
+              aria-label="Group storage map"
+              value={breakdown}
+              onChange={(event) =>
+                setBreakdown(
+                  event.target.value === "ecosystem" ? "ecosystem" : "category",
+                )
+              }
+            >
+              <option value="category">By artifact type</option>
+              <option value="ecosystem">By ecosystem</option>
+            </select>
           </div>
         </header>
         <div className="instrumentBody">
           <div className="measurement">
-            <span className="eyelabel">Candidate inventory</span>
-            <div className="bigNumber">
-              {report ? bytes(report.totals.logical_bytes) : "—"}
-              {!report && <span> bytes</span>}
-            </div>
-            {report ? (
-              <>
-                <dl className="scopeTotals">
-                  <div>
-                    <dt>Reviewable</dt>
-                    <dd>{bytes(report.totals.reviewable_bytes)}</dd>
-                  </div>
-                  <div>
-                    <dt>Protected</dt>
-                    <dd>{bytes(report.totals.protected_bytes)}</dd>
-                  </div>
-                </dl>
-                {partial && (
-                  <p>Observed logical bytes from a partial inventory.</p>
-                )}
-              </>
-            ) : (
-              <p>Scan a folder to measure its build artifacts.</p>
+            <span className="eyelabel">Observed logical size</span>
+            <div className="bigNumber">{bytes(logical_bytes)}</div>
+            {logical_bytes > 0 && (
+              <div className="scopeTrack" aria-hidden="true">
+                <span style={{ flexGrow: reviewable_bytes }} />
+                <span style={{ flexGrow: protected_bytes }} />
+                <span style={{ flexGrow: other }} />
+              </div>
             )}
+            <dl className="scopeTotals">
+              <div>
+                <dt>Reviewable</dt>
+                <dd>{bytes(reviewable_bytes)}</dd>
+              </div>
+              <div>
+                <dt>Protected</dt>
+                <dd>{bytes(protected_bytes)}</dd>
+              </div>
+              {other > 0 && (
+                <div>
+                  <dt>Outside review</dt>
+                  <dd>{bytes(other)}</dd>
+                </div>
+              )}
+            </dl>
+            <p className="logicalNote">
+              {partial ? "Partial inventory. " : ""}File lengths, separate from
+              disk usage.
+            </p>
             <dl className="metrics">
               {[
                 [FolderOpen, "Projects", report?.projects.length],
@@ -295,7 +337,6 @@ export function Overview({
           <Distribution
             key={breakdown}
             entries={data.entries[breakdown]}
-            scanned={!!report}
             breakdown={breakdown}
           />
         </div>
@@ -305,16 +346,12 @@ export function Overview({
               "signal " + (partial ? "partial" : report ? "measured" : "")
             }
           />
-          {report
-            ? partial
-              ? "Partial inventory"
-              : "Inventory measured"
-            : "Awaiting first scan"}
+          <span>{partial ? "Partial inventory" : "Inventory measured"}</span>
           <span className="footRight">
             {roots} scan {roots === 1 ? "root" : "roots"}
           </span>
         </footer>
-        {report && !report.cancelled && (
+        {!report.cancelled && (
           <ExportControl
             key={report.completedAtMs}
             source={{ kind: "fresh" }}
@@ -322,8 +359,7 @@ export function Overview({
           />
         )}
       </section>
-      {savedScan}
-      {!!report?.warnings.length && (
+      {!!report.warnings.length && (
         <details className="panel issues">
           <summary>
             <CircleHelp size={16} />
@@ -380,6 +416,7 @@ export function Overview({
           </div>
         </section>
       </div>
+      {savedScan}
       {data.recent.length > 0 && (
         <section className="panel">
           <header className="sectionHead">

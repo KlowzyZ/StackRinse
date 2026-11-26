@@ -1,5 +1,7 @@
 # Interface screenshots
 
+
+See the [Sprint 8 visual audit](../visual-audit.md) for the current interface and the before-and-after galleries. The examples below illustrate earlier snapshots and the test harness.
 The browser interaction suite builds four temporary projects on disk, runs the StackRinse CLI against them, and passes its JSON report to the React application through a test-only desktop transport. The projects represent synthetic development workloads. Sizes shown in the interface are measured logical bytes. The suite exercises the rendered interface independently of native dialogs and platform webviews.
 
 To capture the current interface, install the Rust and desktop dependencies from the main README, then run these commands from `apps/stackrinse-desktop`.
