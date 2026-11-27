@@ -30,8 +30,8 @@ jobs:
         run: |
           $certificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new(
               [Convert]::FromBase64String($env:RECIPIENT_CERT))
-          if ($certificate.HasPrivateKey -or $certificate.PublicKey.Oid.Value -ne '1.2.840.113549.1.1.1' -or
-              $certificate.PublicKey.Key.KeySize -lt 3072) {
+          $rsa = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPublicKey($certificate)
+          if ($certificate.HasPrivateKey -or -not $rsa -or $rsa.ExportParameters($false).Modulus.Length -lt 384) {
               throw 'Supply a public RSA certificate with a key of at least 3072 bits.'
           }
           [IO.File]::WriteAllBytes("$env:RUNNER_TEMP/stackrinse-recipient.cer", $certificate.RawData)
