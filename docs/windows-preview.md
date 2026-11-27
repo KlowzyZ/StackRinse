@@ -4,7 +4,7 @@ The Windows portable ZIP bundles `StackRinse.exe`, launch instructions, `LICENSE
 
 ## Build and deliver privately
 
-Run the [Windows x64 release candidate workflow](https://github.com/KlowzyZ/StackRinse/actions/workflows/windows-release.yml) from a reviewed main commit with passing cross-platform checks. The workflow builds the production frontend, compiles the locked Windows MSVC release and checks the executable, ZIP and dependency notices. It attempts a packaged launch and WebView2 smoke test where a Windows desktop session is available. The run summary records compilation, verification and launch results.
+Run the [Windows x64 release candidate workflow](https://github.com/KlowzyZ/StackRinse/actions/workflows/windows-release.yml) from a reviewed main commit with passing cross-platform checks. The workflow builds the production frontend, compiles the locked Windows MSVC release and checks the executable, ZIP and dependency notices. It attempts a packaged launch and checks for a responsive native window and an app-owned WebView2 process where a Windows desktop session is available. The runner installs Microsoft WebView2 Evergreen if needed. The run summary records compilation, verification and launch results. The encrypted candidate is retained if a hosted launch check fails, so the maintainer can investigate the same bytes.
 
 The public repository's Actions upload contains only a CMS-encrypted delivery archive. Provide a Base64 DER public RSA certificate (3072 bits or larger) as the workflow input. Keep the private key outside GitHub. This example uses OpenSSL on the trusted machine that decrypts the delivery.
 
