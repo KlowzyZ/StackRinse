@@ -1,8 +1,10 @@
 [package]
 name = "stackrinse-desktop"
-version = "0.1.0"
-edition = "2021"
-license = "MIT"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Offline developer storage discovery and dry-run review"
 publish = false
 
 [build-dependencies]
