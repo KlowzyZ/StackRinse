@@ -1,0 +1,26 @@
+StackRinse v0.1.0-alpha.1 | Windows x64
+
+1. Compare the ZIP's SHA-256 with SHA256SUMS.txt from the GitHub release.
+   In PowerShell use Get-FileHash -Algorithm SHA256 <path-to-zip>.
+2. Extract the ZIP to a folder you can write to.
+3. Ensure Microsoft Edge WebView2 Evergreen Runtime is installed.
+   https://developer.microsoft.com/microsoft-edge/webview2/
+4. Open StackRinse.exe. This alpha is unsigned. Windows may display a
+   reputation warning. Follow your organization's policy for unsigned apps.
+
+The app requires an x64 Windows 10 or 11 system with WebView2 Evergreen.
+No development tools, installer or development server are required.
+Git is optional. In a Git repository, StackRinse protects candidates if
+it cannot verify Git index membership.
+
+The archive contains the application. Settings and scan history stay in
+the current user's Windows app data directories, including after a move
+or re-extraction of the executable.
+
+This alpha supports read-only discovery and dry-run review of scan roots.
+Actual cleanup, quarantine, restoration and permanent deletion are
+unavailable. Observed logical bytes are file sizes, with no guaranteed
+disk-space recovery.
+
+See BUILD.txt for the build commit and executable checksum.
+Issues: https://github.com/KlowzyZ/StackRinse/issues

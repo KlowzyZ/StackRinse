@@ -9,6 +9,7 @@ import {
   Shield,
   SlidersHorizontal,
 } from "lucide-react";
+import { version } from "../package.json";
 import type { Settings } from "./model";
 
 export function Preferences({
@@ -155,7 +156,7 @@ export function Preferences({
         </header>
         <div className="prefRow">
           <span>Clean builds. Keep code.</span>
-          <span className="mono">0.1.0 · MIT · by KLOWZY</span>
+          <span className="mono">{version} · MIT · by KLOWZY</span>
         </div>
         <p className="prefHint">
           Cleanup is limited to dry-run review in this build.

@@ -6,11 +6,24 @@ StackRinse is an open-source developer storage workbench by KLOWZY. Choose a wor
 
 ![StackRinse desktop interface showing measured storage and its artifact breakdown](docs/screenshots/sprint8/overview-dark.png)
 
+*Interface capture using a synthetic workspace and the browser test bridge.*
+
 - **Measure.** Break down observed bytes by artifact type or ecosystem, with reviewable and protected totals.
 - **Understand.** Explore detection evidence, rebuild implications, and project protection.
 - **Compare.** Track comparable scans on this device and export inventory to JSON or CSV.
 
-**Development status.** Scans run locally inside the folders you choose. Cleanup review is a read-only dry run. Logical size measures file lengths. For current setup, [run from source](#run-the-desktop-application). See the [safety model](docs/safety.md), [desktop gallery](docs/visual-audit.md), and [Windows preview packaging plan](docs/windows-preview.md).
+**First public alpha · v0.1.0-alpha.1.** StackRinse supports read-only discovery and dry-run review only. Actual cleanup, quarantine, restoration and permanent deletion are unavailable. Observed logical bytes measure file lengths and carry no guarantee of recoverable disk space. [Changelog](CHANGELOG.md) · [Alpha release notes](docs/releases/v0.1.0-alpha.1.md) · [Screenshot gallery](docs/visual-audit.md)
+
+## Download and run on Windows
+
+1. Open [GitHub Releases](https://github.com/KlowzyZ/StackRinse/releases) and download the alpha's Windows x64 portable ZIP and `SHA256SUMS.txt` when published.
+2. Compare the ZIP hash with `SHA256SUMS.txt` using `Get-FileHash -Algorithm SHA256 <path-to-zip>`. Extract the ZIP.
+3. Make sure Microsoft Edge WebView2 Evergreen Runtime is installed on your x64 Windows 10 or 11 machine. [Microsoft WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/)
+4. Open `StackRinse.exe`. The unsigned alpha may trigger a Windows reputation warning. Follow your organization's policy for unsigned applications.
+
+The ZIP runs without an installer, development tools or a development server. Settings remain in `%APPDATA%\dev.klowzy.stackrinse` and scan history remains in `%LOCALAPPDATA%\dev.klowzy.stackrinse` for the current Windows user. Git is optional for discovery and is used to check index membership inside repositories.
+
+The download targets Windows x64. For Linux and macOS, [build from source](#run-the-desktop-application). [Windows acceptance and packaging guide](docs/windows-preview.md)
 
 ## Try the CLI
 

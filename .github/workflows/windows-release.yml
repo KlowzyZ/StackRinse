@@ -1,0 +1,94 @@
+name: Windows x64 release candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      recipient_certificate:
+        description: Base64 DER RSA certificate for CMS encryption. Supply the public certificate only.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  portable:
+    name: Windows x64 portable
+    if: github.ref == 'refs/heads/main'
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Validate public recipient certificate
+        env:
+          RECIPIENT_CERT: ${{ inputs.recipient_certificate }}
+        run: |
+          $certificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new(
+              [Convert]::FromBase64String($env:RECIPIENT_CERT))
+          $rsa = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPublicKey($certificate)
+          if ($certificate.HasPrivateKey -or -not $rsa -or $rsa.ExportParameters($false).Modulus.Length -lt 384) {
+              throw 'Supply a public RSA certificate with a key of at least 3072 bits.'
+          }
+          [IO.File]::WriteAllBytes("$env:RUNNER_TEMP/stackrinse-recipient.cer", $certificate.RawData)
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/stackrinse-desktop/package-lock.json
+      - name: Build production frontend
+        working-directory: apps/stackrinse-desktop
+        run: |
+          npm ci
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run build
+      - name: Build the locked release executable
+        run: |
+          rustup update stable --no-self-update
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustup target add --toolchain stable x86_64-pc-windows-msvc
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo +stable build --locked --release -p stackrinse-desktop --target x86_64-pc-windows-msvc --features custom-protocol
+      - name: Verify PE architecture, embedded assets and application icon
+        run: |
+          node .github/release/verify-embedded.mjs target/x86_64-pc-windows-msvc/release apps/stackrinse-desktop/dist apps/stackrinse-desktop/src-tauri/icons/icon.ico
+      - name: Review locked Rust dependency licenses
+        run: |
+          $tool = "$env:RUNNER_TEMP/cargo-about.tar.gz"
+          Invoke-WebRequest 'https://github.com/EmbarkStudios/cargo-about/releases/download/0.8.2/cargo-about-0.8.2-x86_64-pc-windows-msvc.tar.gz' -OutFile $tool
+          $expected = '15aa6e7b7475e6aeb7498fffdb0034fc322b2023beac14b123c36c5a641a8826'
+          if ((Get-FileHash $tool -Algorithm SHA256).Hash -ine $expected) { throw 'cargo-about checksum mismatch.' }
+          tar -xzf $tool -C $env:RUNNER_TEMP
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustup default stable
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "$env:RUNNER_TEMP/cargo-about-0.8.2-x86_64-pc-windows-msvc/cargo-about.exe" about generate --manifest-path apps/stackrinse-desktop/src-tauri/Cargo.toml --features custom-protocol --locked --fail --config .github/release/about.toml .github/release/rust-notices.hbs -o "$env:RUNNER_TEMP/stackrinse-rust-notices.txt"
+      - name: Package and verify the ZIP and executable metadata
+        run: |
+          .github/release/package-windows.ps1 -OutputDirectory "$env:RUNNER_TEMP/stackrinse-release" -RustNotices "$env:RUNNER_TEMP/stackrinse-rust-notices.txt"
+      - name: Smoke-test the extracted app in native Windows
+        run: .github/release/smoke-windows.ps1
+      - name: Encrypt release files for the maintainer
+        run: |
+          Add-Type -AssemblyName System.Security.Cryptography.Pkcs
+          $bundle = "$env:RUNNER_TEMP/stackrinse-delivery.zip"
+          Compress-Archive -Path "$env:RUNNER_TEMP/stackrinse-release/*" -DestinationPath $bundle
+          $certificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new(
+              [IO.File]::ReadAllBytes("$env:RUNNER_TEMP/stackrinse-recipient.cer"))
+          $recipient = [System.Security.Cryptography.Pkcs.CmsRecipient]::new($certificate)
+          $content = [System.Security.Cryptography.Pkcs.ContentInfo]::new([IO.File]::ReadAllBytes($bundle))
+          $oid = [System.Security.Cryptography.Oid]::new('2.16.840.1.101.3.4.1.42')
+          $cipher = [System.Security.Cryptography.Pkcs.AlgorithmIdentifier]::new($oid)
+          $envelope = [System.Security.Cryptography.Pkcs.EnvelopedCms]::new($content, $cipher)
+          $envelope.Encrypt($recipient)
+          [IO.File]::WriteAllBytes("$env:RUNNER_TEMP/StackRinse-Windows-x64.cms", $envelope.Encode())
+      - uses: actions/upload-artifact@v4
+        with:
+          name: StackRinse-Windows-x64-encrypted
+          path: ${{ runner.temp }}/StackRinse-Windows-x64.cms
+          if-no-files-found: error
+          retention-days: 14
