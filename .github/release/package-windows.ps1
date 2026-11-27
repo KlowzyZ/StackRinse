@@ -55,6 +55,7 @@ foreach ($package in @('react', 'react-dom', 'scheduler', 'lucide-react', '@taur
         $notices.Add((Get-Content $license.FullName -Raw))
     }
 }
+$notices.Add((Get-Content .github/release/feather-license.txt -Raw))
 $notices | Set-Content "$stage/THIRD-PARTY-NOTICES.txt"
 
 $exeHash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
