@@ -29,8 +29,8 @@ if (-not $version) {
 }
 Write-Host "WebView2 Evergreen $version is installed."
 
-$profile = Join-Path $env:RUNNER_TEMP 'stackrinse-smoke-webview'
-$env:WEBVIEW2_USER_DATA_FOLDER = $profile
+$webViewProfile = Join-Path $env:RUNNER_TEMP 'stackrinse-smoke-webview'
+$env:WEBVIEW2_USER_DATA_FOLDER = $webViewProfile
 $exe = Join-Path $env:RUNNER_TEMP 'stackrinse-unpacked/StackRinse.exe'
 $app = Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe) -PassThru
 try {
@@ -40,7 +40,7 @@ try {
         if ($app.HasExited) { throw "The packaged process exited during startup (exit $($app.ExitCode))." }
         if ($app.MainWindowHandle -ne [IntPtr]::Zero -and $app.MainWindowTitle -eq 'StackRinse' -and $app.Responding) {
             $webView = Get-CimInstance Win32_Process -Filter "Name = 'msedgewebview2.exe'" |
-                Where-Object { $_.CommandLine -and $_.CommandLine.Contains($profile, [StringComparison]::OrdinalIgnoreCase) } |
+                Where-Object { $_.CommandLine -and $_.CommandLine.Contains($webViewProfile, [StringComparison]::OrdinalIgnoreCase) } |
                 Select-Object -First 1
             if ($webView) {
                 $message = "Automated Windows smoke passed. The extracted executable opened a responsive StackRinse window and initialized WebView2 Evergreen $version in its isolated profile."
