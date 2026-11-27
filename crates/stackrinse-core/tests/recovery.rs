@@ -52,6 +52,16 @@ struct Fixture<R = TempDir> {
     cancelled: AtomicBool,
 }
 
+struct FixtureLock(File);
+
+impl Drop for FixtureLock {
+    fn drop(&mut self) {
+        // A parallel crash test can fork while this descriptor is open.
+        // Release the flock even if the child has not closed its copy at exec.
+        let _ = FileExt::unlock(&self.0);
+    }
+}
+
 struct Plan {
     scan: Uuid,
     generation: i64,
@@ -144,10 +154,10 @@ impl<R: AsRef<Path>> Fixture<R> {
         validate_journal(&db, self.root.as_ref())?;
         Ok(db)
     }
-    fn lock(&self) -> Result<File> {
+    fn lock(&self) -> Result<FixtureLock> {
         let lock = File::open(self.root.as_ref().join("instance.lock"))?;
         lock.try_lock_exclusive()?;
-        Ok(lock)
+        Ok(FixtureLock(lock))
     }
     fn dirs(&self) -> Result<[File; 2]> {
         Ok([
