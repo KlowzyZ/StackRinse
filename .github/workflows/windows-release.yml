@@ -70,8 +70,6 @@ jobs:
       - name: Package and verify the ZIP and executable metadata
         run: |
           .github/release/package-windows.ps1 -OutputDirectory "$env:RUNNER_TEMP/stackrinse-release" -RustNotices "$env:RUNNER_TEMP/stackrinse-rust-notices.txt"
-      - name: Smoke-test the extracted app in native Windows
-        run: .github/release/smoke-windows.ps1
       - name: Encrypt release files for the maintainer
         run: |
           Add-Type -AssemblyName System.Security.Cryptography.Pkcs
@@ -92,3 +90,5 @@ jobs:
           path: ${{ runner.temp }}/StackRinse-Windows-x64.cms
           if-no-files-found: error
           retention-days: 14
+      - name: Smoke-test the extracted app in native Windows
+        run: .github/release/smoke-windows.ps1

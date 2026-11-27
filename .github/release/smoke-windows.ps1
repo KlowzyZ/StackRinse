@@ -6,23 +6,52 @@ if (-not [Environment]::UserInteractive -or (Get-Process -Id $PID).SessionId -eq
     exit 0
 }
 
-$listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
-$listener.Start()
-$port = $listener.LocalEndpoint.Port
-$listener.Stop()
-$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=$port"
-$env:WEBVIEW2_USER_DATA_FOLDER = Join-Path $env:RUNNER_TEMP 'stackrinse-smoke-webview'
+function Get-WebView2Version {
+    $client = '{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+    foreach ($root in @('HKLM:\SOFTWARE\WOW6432Node', 'HKCU:\SOFTWARE')) {
+        $key = "$root\Microsoft\EdgeUpdate\Clients\$client"
+        $version = Get-ItemPropertyValue -LiteralPath $key -Name pv -ErrorAction SilentlyContinue
+        if ($version -and [version]$version -gt [version]'0.0.0.0') { return $version }
+    }
+}
+
+$version = Get-WebView2Version
+if (-not $version) {
+    $installer = Join-Path $env:RUNNER_TEMP 'MicrosoftEdgeWebView2RuntimeInstallerX64.exe'
+    Invoke-WebRequest 'https://go.microsoft.com/fwlink/p/?LinkId=2124701' -OutFile $installer
+    $signature = Get-AuthenticodeSignature $installer
+    if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'CN=Microsoft Corporation(?:,|$)') {
+        throw 'WebView2 Evergreen installer signature did not validate as Microsoft Corporation.'
+    }
+    $setup = Start-Process -FilePath $installer -ArgumentList '/silent', '/install' -Wait -PassThru
+    $version = Get-WebView2Version
+    if (-not $version) { throw "WebView2 installation did not register a runtime (exit $($setup.ExitCode))." }
+}
+Write-Host "WebView2 Evergreen $version is installed."
+
+$profile = Join-Path $env:RUNNER_TEMP 'stackrinse-smoke-webview'
+$env:WEBVIEW2_USER_DATA_FOLDER = $profile
 $exe = Join-Path $env:RUNNER_TEMP 'stackrinse-unpacked/StackRinse.exe'
 $app = Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe) -PassThru
 try {
-    node .github/release/check-webview.mjs $port
-    if ($LASTEXITCODE -ne 0) { throw 'Packaged WebView2 smoke test failed.' }
-    $app.Refresh()
-    if ($app.HasExited -or $app.MainWindowHandle -eq [IntPtr]::Zero) {
-        throw 'The packaged process did not create a native app window.'
-    }
-    'Automated Windows launch passed. The extracted EXE opened a window, rendered the embedded Overview and answered settings IPC. Hands-on interaction remains pending.' |
-        Add-Content $env:GITHUB_STEP_SUMMARY
+    $deadline = [DateTime]::UtcNow.AddSeconds(45)
+    do {
+        $app.Refresh()
+        if ($app.HasExited) { throw "The packaged process exited during startup (exit $($app.ExitCode))." }
+        if ($app.MainWindowHandle -ne [IntPtr]::Zero -and $app.MainWindowTitle -eq 'StackRinse' -and $app.Responding) {
+            $webView = Get-CimInstance Win32_Process -Filter "Name = 'msedgewebview2.exe'" |
+                Where-Object { $_.CommandLine -and $_.CommandLine.Contains($profile, [StringComparison]::OrdinalIgnoreCase) } |
+                Select-Object -First 1
+            if ($webView) {
+                $message = "Automated Windows smoke passed. The extracted executable opened a responsive StackRinse window and initialized WebView2 Evergreen $version in its isolated profile."
+                Write-Host $message
+                $message | Add-Content $env:GITHUB_STEP_SUMMARY
+                return
+            }
+        }
+        Start-Sleep -Milliseconds 500
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw "Timed out waiting for the StackRinse window and packaged app WebView2 process (last window title: '$($app.MainWindowTitle)')."
 } finally {
     if (-not $app.HasExited) {
         if (-not $app.CloseMainWindow() -or -not $app.WaitForExit(5000)) {
